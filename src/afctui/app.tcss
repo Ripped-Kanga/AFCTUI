@@ -1,0 +1,117 @@
+Screen {
+    background: $surface;
+}
+
+#main-container {
+    padding: 1 2;
+}
+
+.field-row {
+    height: 3;
+    margin-bottom: 1;
+    layout: horizontal;
+}
+
+.field-label {
+    width: 10;
+    height: 3;
+    content-align: left middle;
+    text-align: left;
+    padding: 0 1 0 0;
+}
+
+.field-input {
+    width: 1fr;
+}
+
+.browse-btn {
+    width: auto;
+    min-width: 12;
+    margin-left: 1;
+    text-style: bold;
+}
+
+#drop-zone {
+    height: 5;
+    border: dashed $accent;
+    content-align: center middle;
+    margin-bottom: 1;
+    color: $text-muted;
+}
+
+#scrubber {
+    height: 6;
+    border: solid $panel;
+    margin-bottom: 1;
+}
+
+#scrubber:focus {
+    border: solid $accent;
+}
+
+#trim-row {
+    height: 3;
+    margin-bottom: 1;
+    layout: horizontal;
+}
+
+.trim-input {
+    width: 1fr;
+    margin-right: 1;
+}
+
+#format-row,
+#codec-row,
+#bitrate-row,
+#channels-row {
+    height: 3;
+    margin-bottom: 1;
+    layout: horizontal;
+}
+
+#playback-row {
+    height: 3;
+    margin-bottom: 1;
+    layout: horizontal;
+}
+
+#playback-row Button {
+    margin-right: 1;
+}
+
+#convert-btn {
+    width: 100%;
+    margin-top: 1;
+    margin-bottom: 1;
+}
+
+#progress-bar {
+    width: 100%;
+    margin: 1 0;
+    color: $text;
+}
+
+#progress-bar Bar {
+    width: 1fr;
+}
+
+#progress-bar Bar > .bar--bar {
+    color: $success;
+    background: $surface-darken-2;
+}
+
+#progress-bar Bar > .bar--complete {
+    color: $accent;
+}
+
+#progress-bar PercentageStatus {
+    text-style: bold;
+    color: $text;
+}
+
+#log {
+    height: auto;
+    max-height: 8;
+    min-height: 4;
+    border: solid $panel;
+}

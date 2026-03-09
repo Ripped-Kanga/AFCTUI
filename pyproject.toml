@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "afctui"
+version = "0.1.0"
+description = "Audio File Converter TUI"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+    "textual>=8.0.0",
+]
+
+[project.scripts]
+afctui = "afctui.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/afctui"]
