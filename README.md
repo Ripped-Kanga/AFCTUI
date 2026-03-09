@@ -52,7 +52,7 @@ brew install ffmpeg
 ## Installation
 
 ```bash
-pipx install git+https://github.com/kanga/AFCTUI.git
+pipx install git+https://github.com/Ripped-Kanga/AFCTUI.git
 ```
 
 ## Usage
