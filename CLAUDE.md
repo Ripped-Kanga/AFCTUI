@@ -93,10 +93,6 @@ Standard presets: 64k, 96k, 128k, 192k, 256k, 320k. Lossless formats (flac, wav)
 - If drag-and-drop is unavailable (terminal does not support it), the Browse button opens `FileBrowserScreen`.
 
 ## Running / Installing
-```bash
-pip install -e .
-afctui
-```
 
 ### Prerequisites
 ```bash
@@ -105,6 +101,18 @@ sudo pacman -S ffmpeg
 
 # Ubuntu / Debian
 sudo apt install ffmpeg
+```
+
+### Install via pipx (recommended)
+```bash
+pipx install git+https://github.com/YOUR_USERNAME/AFCTUI.git
+afctui
+```
+
+### Install for development
+```bash
+pip install -e .
+afctui
 ```
 
 ## ffmpeg Dependency Check
