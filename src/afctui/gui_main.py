@@ -7,10 +7,14 @@ import sys
 
 def _fatal(title: str, message: str) -> None:
     """Show an error dialog without requiring Qt (safe before QApplication exists)."""
+    import os
     import platform
+    import tempfile
+    log_path = os.path.join(tempfile.gettempdir(), "afcgui_startup.log")
     if platform.system() == "Windows":
         import ctypes
-        ctypes.windll.user32.MessageBoxW(0, message, title, 0x10)  # MB_ICONERROR
+        full = f"{message}\n\nSee startup log for details:\n{log_path}"
+        ctypes.windll.user32.MessageBoxW(0, full, title, 0x10)  # MB_ICONERROR
     else:
         print(f"{title}: {message}", file=sys.stderr)
 

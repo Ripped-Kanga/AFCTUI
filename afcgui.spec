@@ -43,7 +43,7 @@ a = Analysis(
     ],
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=['rthook_log.py'],
     excludes=[
         # TUI-only dependencies — not needed in the GUI build
         'textual',
