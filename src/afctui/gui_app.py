@@ -135,6 +135,7 @@ class AFCGuiApp(QMainWindow):
         self._probe_worker: _ProbeWorker | None = None
         self._conversion_worker: _ConversionWorker | None = None
         self._playback_worker: _PlaybackWorker | None = None
+        self._prev_codec: str = ""
 
         self._build_ui()
         self._connect_signals()
@@ -431,8 +432,13 @@ class AFCGuiApp(QMainWindow):
     def _on_codec_changed(self) -> None:
         self._update_bitrate_visibility()
         codec = self._codec_combo.currentData() or ""
+        if codec == self._prev_codec:
+            return
         if codec == "pcm_alaw":
             self._log("pcm_alaw (G.711 A-law): output will be resampled to 8000 Hz, 8-bit.")
+        elif self._prev_codec == "pcm_alaw":
+            self._log(f"Codec changed to {codec} — 8000 Hz resampling no longer applies.")
+        self._prev_codec = codec
 
     def _update_bitrate_visibility(self) -> None:
         container = self._format_combo.currentData() or ""
