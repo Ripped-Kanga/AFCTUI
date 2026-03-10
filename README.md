@@ -1,10 +1,15 @@
-# AFCTUI — Audio File Converter TUI
+# AFCTUI — Audio File Converter
 
-A terminal UI application for converting audio files between formats, with built-in playback and trim support. Built with [Textual](https://textual.textualize.io/) and system ffmpeg.
+A cross-platform audio file converter with two interfaces:
+
+- **TUI** (Linux / macOS) — terminal UI built with [Textual](https://textual.textualize.io/)
+- **Windows GUI** — native desktop app built with PySide6, distributed as a standalone `.exe`
+
+Both use system ffmpeg under the hood.
 
 ## Features
 
-- **Drag and drop** — drop an audio file directly into the terminal; falls back to a built-in file browser (no hidden files or folders shown)
+- **Drag and drop** — drop an audio file directly into the terminal (TUI); file picker dialog (GUI)
 - **Audio playback** — play the original file and the converted output without leaving the app
 - **Trim / scrubber** — visual timeline with adjustable start and end handles to convert only a portion of the file
 - **Conversion options** — container format, codec, bitrate (hidden for lossless), mono/stereo channels
@@ -30,10 +35,38 @@ A terminal UI application for converting audio files between formats, with built
 
 \* `pcm_alaw` (G.711 A-law) is fixed at 8000 Hz, 8-bit — used for telephony.
 
-## Requirements
+---
+
+## Windows GUI (`afcgui.exe`)
+
+A standalone desktop application — no Python or Textual required.
+
+### ffmpeg
+
+ffmpeg is **not** bundled in the exe. On first launch, if ffmpeg is not found the app offers:
+
+- **Install via winget** — opens a console window and runs `winget install --id Gyan.FFmpeg`
+- **Open ffmpeg.org** — opens the download page in your browser
+
+Once ffmpeg is installed, restart the app.
+
+### Building the exe
+
+```bash
+pip install pyinstaller PySide6
+pyinstaller afcgui.spec
+```
+
+The resulting executable is at `dist/afcgui.exe`.
+
+---
+
+## TUI (Linux / macOS)
+
+### Requirements
 
 - Python 3.11+
-- ffmpeg (includes ffplay) installed on your system
+- ffmpeg (includes ffplay and ffprobe) installed on your system
 
 ```bash
 # Arch / Manjaro
@@ -49,13 +82,13 @@ sudo dnf install ffmpeg
 brew install ffmpeg
 ```
 
-## Installation
+### Installation
 
 ```bash
 pipx install git+https://github.com/Ripped-Kanga/AFCTUI.git
 ```
 
-## Usage
+### Usage
 
 ```bash
 afctui
@@ -81,18 +114,25 @@ afctui
 | Click | Snap nearest handle to click position |
 | Drag | Move active handle |
 
+---
+
 ## Project Structure
 
 ```
 src/afctui/
-├── __init__.py      — package version
-├── __main__.py      — entry point, ffmpeg startup check
-├── app.py           — main Textual application
-├── app.tcss         — stylesheet
-├── browse.py        — FileBrowserScreen modal (_AudioTree, no hidden files)
-├── converter.py     — ffmpeg/ffprobe wrapper, conversion logic
-├── player.py        — ffplay-based audio playback
-└── scrubber.py      — AudioScrubber widget (visual trim timeline)
+├── __init__.py       — package version
+├── __main__.py       — TUI entry point, ffmpeg startup check
+├── app.py            — main Textual application
+├── app.tcss          — TUI stylesheet
+├── browse.py         — FileBrowserScreen modal (_AudioTree, no hidden files)
+├── converter.py      — ffmpeg/ffprobe wrapper, conversion logic
+├── gui_app.py        — PySide6 main window (Windows GUI)
+├── gui_main.py       — Windows GUI entry point
+├── gui_scrubber.py   — PySide6 scrubber widget
+├── player.py         — ffplay-based audio playback
+└── scrubber.py       — Textual scrubber widget (TUI trim timeline)
+
+afcgui.spec           — PyInstaller build spec for afcgui.exe
 ```
 
 ## License
