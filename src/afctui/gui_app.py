@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QFont, QKeySequence, QShortcut
+from PySide6.QtGui import QColor, QFont, QKeySequence, QShortcut, QTextCharFormat
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -136,6 +136,7 @@ class AFCGuiApp(QMainWindow):
         self._conversion_worker: _ConversionWorker | None = None
         self._playback_worker: _PlaybackWorker | None = None
         self._prev_codec: str = ""
+        self._syncing_codec: bool = False
 
         self._build_ui()
         self._connect_signals()
@@ -279,9 +280,11 @@ class AFCGuiApp(QMainWindow):
         root.addWidget(self._log_edit, 1)
 
     def _repopulate_codec_combo(self, container_ext: str) -> None:
+        self._syncing_codec = True
         self._codec_combo.clear()
         for codec in OUTPUT_FORMATS.get(container_ext, []):
             self._codec_combo.addItem(codec, codec)
+        self._syncing_codec = False
 
     # ------------------------------------------------------------------
     # Signal wiring
@@ -379,9 +382,9 @@ class AFCGuiApp(QMainWindow):
         if os.path.isfile(text) and is_audio_file(text):
             self._set_input_file(text)
         elif os.path.isfile(text):
-            self._log(f"Unsupported format: {Path(text).suffix or '(none)'}")
+            self._log_warn(f"Unsupported format: {Path(text).suffix or '(none)'}")
         else:
-            self._log(f"File not found: {text}")
+            self._log_error(f"File not found: {text}")
 
     # ------------------------------------------------------------------
     # File probing
@@ -392,7 +395,7 @@ class AFCGuiApp(QMainWindow):
             self._probe_worker.quit()
         worker = _ProbeWorker(path)
         worker.result.connect(lambda info: self._on_probe_done(path, info))
-        worker.error.connect(lambda e: self._log(f"Probe failed: {e}"))
+        worker.error.connect(lambda e: self._log_error(f"Probe failed: {e}"))
         self._probe_worker = worker
         worker.start()
 
@@ -430,14 +433,18 @@ class AFCGuiApp(QMainWindow):
             self._output_edit.setText(str(Path(self._current_input_path).with_suffix(container)))
 
     def _on_codec_changed(self) -> None:
+        if self._syncing_codec:
+            return
         self._update_bitrate_visibility()
         codec = self._codec_combo.currentData() or ""
         if codec == self._prev_codec:
             return
         if codec == "pcm_alaw":
-            self._log("pcm_alaw (G.711 A-law): output will be resampled to 8000 Hz, 8-bit.")
+            self._log_warn("pcm_alaw (G.711 A-law): output will be resampled to 8000 Hz, 8-bit.")
         elif self._prev_codec == "pcm_alaw":
             self._log(f"Codec changed to {codec} — 8000 Hz resampling no longer applies.")
+        elif codec:
+            self._log(f"Codec: {codec}")
         self._prev_codec = codec
 
     def _update_bitrate_visibility(self) -> None:
@@ -507,13 +514,13 @@ class AFCGuiApp(QMainWindow):
 
         input_path = self._input_edit.text().strip().strip("'\"")
         if not input_path:
-            self._log("No input file specified.")
+            self._log_warn("No input file specified.")
             return
         if not os.path.isfile(input_path):
-            self._log(f"File not found: {input_path}")
+            self._log_error(f"File not found: {input_path}")
             return
         if not is_audio_file(input_path):
-            self._log(f"Unsupported format: {Path(input_path).suffix}")
+            self._log_warn(f"Unsupported format: {Path(input_path).suffix}")
             return
 
         output_path = self._output_edit.text().strip()
@@ -570,7 +577,7 @@ class AFCGuiApp(QMainWindow):
             self._log("Cancelling conversion…")
 
     def _on_conversion_error(self, msg: str) -> None:
-        self._log(f"Error: {msg}")
+        self._log_error(f"Error: {msg}")
         self._converting = False
         self._convert_btn.setEnabled(True)
         self._convert_btn.setText("Convert")
@@ -590,7 +597,7 @@ class AFCGuiApp(QMainWindow):
             self._converted_path = output_path
             self._play_conv_btn.setEnabled(True)
         else:
-            self._log("Conversion cancelled.")
+            self._log_warn("Conversion cancelled.")
             if os.path.exists(output_path):
                 try:
                     os.unlink(output_path)
@@ -614,7 +621,7 @@ class AFCGuiApp(QMainWindow):
 
     def _on_play_converted(self) -> None:
         if not self._converted_path or not os.path.isfile(self._converted_path):
-            self._log("Converted file not found.")
+            self._log_error("Converted file not found.")
             return
         self._stop_current_playback()
         self._play_conv_btn.setEnabled(False)
@@ -654,3 +661,21 @@ class AFCGuiApp(QMainWindow):
 
     def _log(self, msg: str) -> None:
         self._log_edit.append(msg)
+
+    def _log_warn(self, msg: str) -> None:
+        fmt = QTextCharFormat()
+        fmt.setForeground(QColor("#E8A000"))
+        cursor = self._log_edit.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        cursor.insertText(msg + "\n", fmt)
+        self._log_edit.setTextCursor(cursor)
+        self._log_edit.ensureCursorVisible()
+
+    def _log_error(self, msg: str) -> None:
+        fmt = QTextCharFormat()
+        fmt.setForeground(QColor("#D94040"))
+        cursor = self._log_edit.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        cursor.insertText(msg + "\n", fmt)
+        self._log_edit.setTextCursor(cursor)
+        self._log_edit.ensureCursorVisible()
