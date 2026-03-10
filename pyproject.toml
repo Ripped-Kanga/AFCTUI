@@ -13,8 +13,12 @@ dependencies = [
     "textual>=8.0.0",
 ]
 
+[project.optional-dependencies]
+gui = ["pyside6>=6.6"]
+
 [project.scripts]
 afctui = "afctui.__main__:main"
+afcgui  = "afctui.gui_main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/afctui"]
