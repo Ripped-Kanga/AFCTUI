@@ -78,15 +78,14 @@ def _run_winget_install() -> None:
 
     from PySide6.QtWidgets import QMessageBox
 
-    cmd = [
-        "cmd", "/c",
-        "winget", "install", "--id", "gyan.dev.ffmpeg.full", "-e",
-        "&&", "echo.", "&&",
-        "echo Install complete. You can close this window and restart AFCTUI.",
-        "&&", "pause",
-    ]
+    # Use /k (keep-open) so the window stays visible after winget finishes.
+    # Passing the winget command as a single string to cmd /k avoids the
+    # list2cmdline quoting issues that break && chaining with /c.
     try:
-        subprocess.Popen(cmd, creationflags=subprocess.CREATE_NEW_CONSOLE)
+        subprocess.Popen(
+            ["cmd", "/k", "winget install --id gyan.dev.ffmpeg.full -e"],
+            creationflags=subprocess.CREATE_NEW_CONSOLE,
+        )
     except FileNotFoundError:
         QMessageBox.information(
             None,
