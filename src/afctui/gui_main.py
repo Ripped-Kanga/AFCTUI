@@ -5,7 +5,29 @@ from __future__ import annotations
 import sys
 
 
+def _fatal(title: str, message: str) -> None:
+    """Show an error dialog without requiring Qt (safe before QApplication exists)."""
+    import platform
+    if platform.system() == "Windows":
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(0, message, title, 0x10)  # MB_ICONERROR
+    else:
+        print(f"{title}: {message}", file=sys.stderr)
+
+
 def main() -> None:
+    try:
+        _run()
+    except Exception as exc:  # noqa: BLE001
+        import traceback
+        _fatal(
+            "AFCGUI — Unexpected Error",
+            f"AFCGUI failed to start:\n\n{exc}\n\n{traceback.format_exc()}",
+        )
+        sys.exit(1)
+
+
+def _run() -> None:
     from PySide6.QtWidgets import QApplication
 
     app = QApplication(sys.argv)
