@@ -64,6 +64,7 @@ def check_ffmpeg() -> None:
         raise RuntimeError(
             f"{tools} not found on PATH.\n\n"
             "Install ffmpeg to use AFCTUI:\n"
+            "  Windows:        winget install --id Gyan.FFmpeg\n"
             "  Arch/Manjaro:   sudo pacman -S ffmpeg\n"
             "  Ubuntu/Debian:  sudo apt install ffmpeg\n"
             "  Fedora:         sudo dnf install ffmpeg\n"
