@@ -13,7 +13,7 @@
 # entire distribution to be released under the GPL.
 #
 # Instead, afcgui detects a missing ffmpeg at startup and offers a one-click
-# "Install via winget" path (winget install gyan.dev.ffmpeg.full).
+# "Install via winget" path (winget install --id Gyan.FFmpeg).
 #
 # If you build your own LGPL-only shared (DLL) ffmpeg and wish to bundle it,
 # add entries like the following to `binaries` below and ensure you host the
