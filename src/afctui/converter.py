@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -13,6 +14,13 @@ from typing import Callable, Optional
 
 _TIME_PATTERN = re.compile(r"out_time_us=(\d+)")
 _DURATION_PATTERN = re.compile(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
+
+# Suppress console windows on Windows for background processes
+_POPEN_FLAGS: dict = (
+    {"creationflags": subprocess.CREATE_NO_WINDOW}
+    if platform.system() == "Windows"
+    else {}
+)
 
 SUPPORTED_INPUT_FORMATS: frozenset[str] = frozenset({
     ".mp3", ".flac", ".wav", ".aac", ".ogg", ".opus",
@@ -91,6 +99,7 @@ def _probe_with_ffprobe(ffprobe: str, path: Path) -> AudioInfo:
             str(path),
         ],
         capture_output=True, text=True, timeout=15,
+        **_POPEN_FLAGS,
     )
     try:
         data = json.loads(result.stdout)
@@ -143,6 +152,7 @@ def _probe_with_ffmpeg(path: Path) -> AudioInfo:
     result = subprocess.run(
         ["ffmpeg", "-i", str(path)],
         capture_output=True, text=True, timeout=15,
+        **_POPEN_FLAGS,
     )
     stderr = result.stderr
 
@@ -255,6 +265,7 @@ def _run_ffmpeg(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        **_POPEN_FLAGS,
     )
 
     try:
