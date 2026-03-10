@@ -99,7 +99,8 @@ def _handle_missing_ffmpeg(error_msg: str) -> bool:
 
 
 def _run_winget_install() -> None:
-    """Launch winget in a new visible console window to install ffmpeg."""
+    """Launch winget in a new visible console window to install ffmpeg,
+    then prompt the user to relaunch once it completes."""
     import subprocess
 
     from PySide6.QtWidgets import QMessageBox
@@ -122,6 +123,25 @@ def _run_winget_install() -> None:
             "  • Add the ffmpeg bin/ folder to your system PATH\n"
             "  • Restart AFCTUI",
         )
+        return
+
+    # winget runs asynchronously — wait for the user to signal completion
+    # then relaunch so the fresh PATH is picked up.
+    msg = QMessageBox()
+    msg.setWindowTitle("Installing ffmpeg…")
+    msg.setIcon(QMessageBox.Icon.Information)
+    msg.setText("ffmpeg is being installed in the console window.")
+    msg.setInformativeText(
+        "Wait for the installation to finish, then click Relaunch.\n\n"
+        "The app will restart and pick up the new ffmpeg automatically."
+    )
+    relaunch_btn = msg.addButton("Relaunch", QMessageBox.ButtonRole.AcceptRole)
+    msg.addButton("Close", QMessageBox.ButtonRole.RejectRole)
+    msg.exec()
+
+    if msg.clickedButton() == relaunch_btn:
+        subprocess.Popen([sys.executable] + sys.argv)
+        sys.exit(0)
 
 if __name__ == "__main__":
     main()
