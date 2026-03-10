@@ -2,8 +2,16 @@
 
 from __future__ import annotations
 
+import platform
 import subprocess
 from pathlib import Path
+
+# Suppress console windows on Windows for background processes
+_POPEN_FLAGS: dict = (
+    {"creationflags": subprocess.CREATE_NO_WINDOW}
+    if platform.system() == "Windows"
+    else {}
+)
 
 
 def play_audio(path: str | Path) -> subprocess.Popen:
@@ -16,6 +24,7 @@ def play_audio(path: str | Path) -> subprocess.Popen:
         ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", str(path)],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        **_POPEN_FLAGS,
     )
 
 

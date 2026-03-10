@@ -37,13 +37,12 @@ a = Analysis(
     hiddenimports=[
         'afctui.converter',
         'afctui.player',
-        'afctui.scrubber',
         'afctui.gui_scrubber',
         'afctui.gui_app',
     ],
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=['rthook_log.py'],
     excludes=[
         # TUI-only dependencies — not needed in the GUI build
         'textual',
