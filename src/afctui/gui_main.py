@@ -9,7 +9,7 @@ def main() -> None:
     from PySide6.QtWidgets import QApplication
 
     app = QApplication(sys.argv)
-    app.setApplicationName("AFCTUI")
+    app.setApplicationName("AFCGUI")
     app.setApplicationDisplayName("Audio File Converter")
 
     try:

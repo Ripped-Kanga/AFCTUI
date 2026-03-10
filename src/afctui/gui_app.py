@@ -124,7 +124,7 @@ class AFCGuiApp(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("AFCTUI — Audio File Converter")
+        self.setWindowTitle("AFCGUI — Audio File Converter")
         self.setMinimumSize(720, 640)
 
         self._current_input_path: str | None = None
