@@ -83,7 +83,7 @@ def _run_winget_install() -> None:
     # list2cmdline quoting issues that break && chaining with /c.
     try:
         subprocess.Popen(
-            ["cmd", "/k", "winget install --id gyan.dev.ffmpeg.full -e"],
+            ["cmd", "/k", "winget install --id Gyan.FFmpeg -e"],
             creationflags=subprocess.CREATE_NEW_CONSOLE,
         )
     except FileNotFoundError:
