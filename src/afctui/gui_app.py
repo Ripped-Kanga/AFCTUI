@@ -34,9 +34,8 @@ from afctui.converter import (
     get_audio_info,
     is_audio_file,
 )
-from afctui.gui_scrubber import AudioScrubberWidget
+from afctui.gui_scrubber import AudioScrubberWidget, fmt_time
 from afctui.player import play_audio, stop_audio
-from afctui.scrubber import fmt_time
 
 
 # ---------------------------------------------------------------------------

@@ -6,7 +6,12 @@ from PySide6.QtCore import QEvent, QRect, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
-from afctui.scrubber import fmt_time
+def fmt_time(seconds: float) -> str:
+    """Format seconds as M:SS.s"""
+    seconds = max(0.0, seconds)
+    m = int(seconds // 60)
+    s = seconds % 60
+    return f"{m}:{s:04.1f}"
 
 
 class AudioScrubberWidget(QWidget):
