@@ -140,8 +140,38 @@ def _run_winget_install() -> None:
     msg.exec()
 
     if msg.clickedButton() == relaunch_btn:
-        subprocess.Popen([sys.executable] + sys.argv)
+        import os
+        env = os.environ.copy()
+        env["PATH"] = _fresh_windows_path()
+        subprocess.Popen([sys.executable] + sys.argv, env=env)
         sys.exit(0)
+
+
+def _fresh_windows_path() -> str:
+    """Read the current system + user PATH from the registry.
+
+    winget updates the registry but the change is not visible in the
+    environment of the already-running process.  Spawning the relaunch
+    with the registry values gives it the same PATH that a cold start
+    of the exe would see.
+    """
+    import winreg
+
+    parts: list[str] = []
+    keys = [
+        (winreg.HKEY_LOCAL_MACHINE,
+         r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+        (winreg.HKEY_CURRENT_USER, r"Environment"),
+    ]
+    for hive, subkey in keys:
+        try:
+            with winreg.OpenKey(hive, subkey) as k:
+                value, _ = winreg.QueryValueEx(k, "Path")
+                if value:
+                    parts.append(value)
+        except OSError:
+            pass
+    return ";".join(parts) if parts else os.environ.get("PATH", "")
 
 if __name__ == "__main__":
     main()
