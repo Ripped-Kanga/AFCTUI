@@ -98,10 +98,6 @@ def _handle_missing_ffmpeg(error_msg: str) -> bool:
     return False
 
 
-if __name__ == "__main__":
-    main()
-
-
 def _run_winget_install() -> None:
     """Launch winget in a new visible console window to install ffmpeg."""
     import subprocess
@@ -126,3 +122,6 @@ def _run_winget_install() -> None:
             "  • Add the ffmpeg bin/ folder to your system PATH\n"
             "  • Restart AFCTUI",
         )
+
+if __name__ == "__main__":
+    main()
