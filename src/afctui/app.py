@@ -160,11 +160,13 @@ class AFCApp(App):
 
             yield Button("Convert", variant="primary", id="convert-btn")
             yield ProgressBar(total=100, show_eta=False, id="progress-bar")
+            yield Static("", id="settings-summary")
             yield RichLog(highlight=True, markup=True, id="log")
         yield Footer()
 
     def on_mount(self) -> None:
         self.query_one("#progress-bar", ProgressBar).update(progress=0)
+        self._refresh_settings_summary()
         self.log_message("[dim]Ready. Drop an audio file or browse to select one.[/]")
         formats = ", ".join(sorted(SUPPORTED_INPUT_FORMATS))
         self.log_message(f"[dim]Supported input formats: {formats}[/]")
@@ -262,6 +264,7 @@ class AFCApp(App):
         codec_select.set_options([(c, c) for c in codecs])
 
         self.query_one("#bitrate-row").display = self._should_show_bitrate()
+        self._refresh_settings_summary()
 
         current_output = self.query_one("#output-path", Input).value.strip()
         if current_output:
@@ -278,10 +281,40 @@ class AFCApp(App):
         if codec == "pcm_alaw":
             self.log_message("[yellow]pcm_alaw (G.711 A-law): output will be resampled to 8000 Hz, 8-bit.[/]")
         elif self._prev_codec == "pcm_alaw":
-            self.log_message(f"[dim]Codec changed to {codec} — 8000 Hz resampling no longer applies.[/]")
-        elif codec:
-            self.log_message(f"[dim]Codec: {codec}[/]")
+            self.log_message("[dim]8000 Hz resampling constraint removed.[/]")
         self._prev_codec = codec
+        self._refresh_settings_summary()
+
+    @on(Select.Changed, "#bitrate-select")
+    def _on_bitrate_changed(self, _event: Select.Changed) -> None:
+        self._refresh_settings_summary()
+
+    @on(Select.Changed, "#channels-select")
+    def _on_channels_changed(self, _event: Select.Changed) -> None:
+        self._refresh_settings_summary()
+
+    def _refresh_settings_summary(self) -> None:
+        """Update the settings summary line above the log."""
+        container = self.query_one("#format-select", Select).value
+        codec = self.query_one("#codec-select", Select).value
+        channels = self.query_one("#channels-select", Select).value
+
+        fmt_name = str(container).lstrip(".").upper()
+        channels_name = "Mono" if channels == 1 else "Stereo"
+        lossless = container in LOSSLESS_CONTAINERS or str(codec) == "copy"
+
+        if str(codec) == "pcm_alaw":
+            codec_display = "pcm_alaw  ⚠ 8000 Hz (fixed)"
+        else:
+            codec_display = str(codec)
+
+        if lossless:
+            text = f"Output:  {fmt_name}  ·  {codec_display}  ·  {channels_name}"
+        else:
+            bitrate = self.query_one("#bitrate-select", Select).value
+            text = f"Output:  {fmt_name}  ·  {codec_display}  ·  {bitrate}  ·  {channels_name}"
+
+        self.query_one("#settings-summary", Static).update(text)
 
     def _should_show_bitrate(self) -> bool:
         container = self.query_one("#format-select", Select).value

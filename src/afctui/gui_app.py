@@ -149,6 +149,7 @@ class AFCGuiApp(QMainWindow):
         # Escape cancels an in-progress conversion
         QShortcut(QKeySequence("Escape"), self).activated.connect(self._on_cancel)
 
+        self._refresh_settings_summary()
         self._log("Ready. Drop an audio file or click Browse to select one.")
         self._log("Supported input formats: " + ", ".join(sorted(SUPPORTED_INPUT_FORMATS)))
 
@@ -272,15 +273,36 @@ class AFCGuiApp(QMainWindow):
         self._progress.setTextVisible(True)
         root.addWidget(self._progress)
 
-        # ── Log ───────────────────────────────────────────────────────
-        self._log_edit = QTextEdit()
-        self._log_edit.setReadOnly(True)
         mono = QFont()
         mono.setFamily("Consolas")
         mono.setStyleHint(QFont.StyleHint.Monospace)
         mono.setPointSize(9)
+
+        # ── Settings summary ──────────────────────────────────────────
+        self._settings_label = QLabel()
+        self._settings_label.setFont(mono)
+        self._settings_label.setStyleSheet(
+            "padding: 4px 6px;"
+            "color: #aaaaaa;"
+            "border-top: 1px solid #444;"
+            "border-left: 1px solid #444;"
+            "border-right: 1px solid #444;"
+            "border-top-left-radius: 3px;"
+            "border-top-right-radius: 3px;"
+            "background: transparent;"
+        )
+        root.addWidget(self._settings_label)
+
+        # ── Log ───────────────────────────────────────────────────────
+        self._log_edit = QTextEdit()
+        self._log_edit.setReadOnly(True)
         self._log_edit.setFont(mono)
         self._log_edit.setMinimumHeight(100)
+        self._log_edit.setStyleSheet(
+            "border-top: none;"
+            "border-top-left-radius: 0;"
+            "border-top-right-radius: 0;"
+        )
         root.addWidget(self._log_edit, 1)
 
     def _repopulate_codec_combo(self, container_ext: str) -> None:
@@ -303,6 +325,8 @@ class AFCGuiApp(QMainWindow):
 
         self._format_combo.currentIndexChanged.connect(self._on_format_changed)
         self._codec_combo.currentIndexChanged.connect(self._on_codec_changed)
+        self._bitrate_combo.currentIndexChanged.connect(self._refresh_settings_summary)
+        self._channels_combo.currentIndexChanged.connect(self._refresh_settings_summary)
 
         self._input_edit.textChanged.connect(self._on_input_text_changed)
         self._input_edit.returnPressed.connect(self._on_input_submitted)
@@ -430,6 +454,7 @@ class AFCGuiApp(QMainWindow):
         container = self._format_combo.currentData()
         self._repopulate_codec_combo(container)
         self._update_bitrate_visibility()
+        self._refresh_settings_summary()
 
         current_out = self._output_edit.text().strip()
         if current_out:
@@ -447,10 +472,33 @@ class AFCGuiApp(QMainWindow):
         if codec == "pcm_alaw":
             self._log_warn("pcm_alaw (G.711 A-law): output will be resampled to 8000 Hz, 8-bit.")
         elif self._prev_codec == "pcm_alaw":
-            self._log(f"Codec changed to {codec} — 8000 Hz resampling no longer applies.")
-        elif codec:
-            self._log(f"Codec: {codec}")
+            self._log("8000 Hz resampling constraint removed.")
         self._prev_codec = codec
+        self._refresh_settings_summary()
+
+    def _refresh_settings_summary(self) -> None:
+        """Update the settings summary label above the log."""
+        container = self._format_combo.currentData() or ""
+        codec = self._codec_combo.currentData() or ""
+        channels = self._channels_combo.currentData()
+
+        fmt_name = container.lstrip(".").upper() or "—"
+        channels_name = "Mono" if channels == 1 else "Stereo"
+
+        lossless = container in LOSSLESS_CONTAINERS or codec == "copy"
+
+        if codec == "pcm_alaw":
+            codec_display = "pcm_alaw  ⚠ 8000 Hz (fixed)"
+        else:
+            codec_display = codec or "—"
+
+        if lossless:
+            text = f"Output:  {fmt_name}  ·  {codec_display}  ·  {channels_name}"
+        else:
+            bitrate = self._bitrate_combo.currentData() or "—"
+            text = f"Output:  {fmt_name}  ·  {codec_display}  ·  {bitrate}  ·  {channels_name}"
+
+        self._settings_label.setText(text)
 
     def _update_bitrate_visibility(self) -> None:
         container = self._format_combo.currentData() or ""
