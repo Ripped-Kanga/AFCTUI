@@ -11,9 +11,11 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QSizePolicy,
@@ -36,6 +38,13 @@ from afctui.converter import (
 )
 from afctui.gui_scrubber import AudioScrubberWidget
 from afctui.player import play_audio, stop_audio
+from afctui.presets import (
+    BUILT_IN_PRESETS,
+    all_presets,
+    delete_preset,
+    load_user_presets,
+    save_preset,
+)
 from afctui.utils import fmt_time, parse_trim_time
 
 
@@ -141,6 +150,7 @@ class AFCGuiApp(QMainWindow):
         self._playback_worker: _PlaybackWorker | None = None
         self._prev_codec: str = ""
         self._syncing_codec: bool = False
+        self._syncing_preset: bool = False
 
         self._build_ui()
         self._connect_signals()
@@ -149,6 +159,7 @@ class AFCGuiApp(QMainWindow):
         # Escape cancels an in-progress conversion
         QShortcut(QKeySequence("Escape"), self).activated.connect(self._on_cancel)
 
+        self._repopulate_preset_combo()
         self._refresh_settings_summary()
         self._log("Ready. Drop an audio file or click Browse to select one.")
         self._log("Supported input formats: " + ", ".join(sorted(SUPPORTED_INPUT_FORMATS)))
@@ -199,7 +210,12 @@ class AFCGuiApp(QMainWindow):
         # ── Format / Codec / Bitrate / Channels row ───────────────────
         opts_row = QHBoxLayout()
 
-        opts_row.addWidget(QLabel("Format:"))
+        opts_row.addWidget(QLabel("Preset:"))
+        self._preset_combo = QComboBox()
+        self._preset_combo.setMinimumWidth(160)
+        opts_row.addWidget(self._preset_combo)
+
+        opts_row.addWidget(QLabel("  Format:"))
         self._format_combo = QComboBox()
         for ext in OUTPUT_FORMATS:
             self._format_combo.addItem(ext.lstrip(".").upper(), ext)
@@ -323,6 +339,7 @@ class AFCGuiApp(QMainWindow):
         self._play_conv_btn.clicked.connect(self._on_play_converted)
         self._stop_btn.clicked.connect(self._on_stop_playback)
 
+        self._preset_combo.currentIndexChanged.connect(self._on_preset_changed)
         self._format_combo.currentIndexChanged.connect(self._on_format_changed)
         self._codec_combo.currentIndexChanged.connect(self._on_codec_changed)
         self._bitrate_combo.currentIndexChanged.connect(self._refresh_settings_summary)
@@ -445,6 +462,120 @@ class AFCGuiApp(QMainWindow):
             f"{info.channels}ch, {info.sample_rate} Hz, "
             f"{bitrate_str}, {int(mins)}m {secs:.1f}s"
         )
+
+    # ------------------------------------------------------------------
+    # Presets
+    # ------------------------------------------------------------------
+
+    _SAVE_SENTINEL = "__SAVE__"
+    _DELETE_SENTINEL = "__DELETE__"
+
+    def _repopulate_preset_combo(self, select_name: str | None = None) -> None:
+        """Rebuild the preset combo. Optionally re-select *select_name* after."""
+        self._syncing_preset = True
+        self._preset_combo.clear()
+        self._preset_combo.addItem("(Select preset…)", None)
+
+        presets = all_presets()
+        user = load_user_presets()
+
+        for name, _ in presets.items():
+            label = name if name in user else f"{name}  ★"
+            self._preset_combo.addItem(label, name)
+
+        self._preset_combo.insertSeparator(self._preset_combo.count())
+        self._preset_combo.addItem("Save as Preset…", self._SAVE_SENTINEL)
+        self._preset_combo.addItem("Delete Preset…", self._DELETE_SENTINEL)
+
+        if select_name is not None:
+            idx = self._preset_combo.findData(select_name)
+            if idx >= 0:
+                self._preset_combo.setCurrentIndex(idx)
+
+        self._syncing_preset = False
+
+    def _on_preset_changed(self, index: int) -> None:
+        if self._syncing_preset:
+            return
+        data = self._preset_combo.itemData(index)
+        if data is None:
+            return
+        if data == self._SAVE_SENTINEL:
+            self._syncing_preset = True
+            self._preset_combo.setCurrentIndex(0)
+            self._syncing_preset = False
+            self._do_save_preset()
+        elif data == self._DELETE_SENTINEL:
+            self._syncing_preset = True
+            self._preset_combo.setCurrentIndex(0)
+            self._syncing_preset = False
+            self._do_delete_preset()
+        else:
+            presets = all_presets()
+            if data in presets:
+                self._apply_preset(data, presets[data])
+
+    def _apply_preset(self, name: str, preset: dict) -> None:
+        """Apply a preset's settings to all option combos."""
+        self._syncing_preset = True
+
+        container = preset.get("container", "")
+        codec = preset.get("codec", "")
+        bitrate = preset.get("bitrate")
+        channels = preset.get("channels", 2)
+
+        idx = self._format_combo.findData(container)
+        if idx >= 0:
+            self._format_combo.setCurrentIndex(idx)
+            self._repopulate_codec_combo(container)
+
+        idx = self._codec_combo.findData(codec)
+        if idx >= 0:
+            self._codec_combo.setCurrentIndex(idx)
+
+        if bitrate:
+            idx = self._bitrate_combo.findData(bitrate)
+            if idx >= 0:
+                self._bitrate_combo.setCurrentIndex(idx)
+
+        idx = self._channels_combo.findData(channels)
+        if idx >= 0:
+            self._channels_combo.setCurrentIndex(idx)
+
+        self._update_bitrate_visibility()
+        self._syncing_preset = False
+
+        self._update_output_path()
+        self._refresh_settings_summary()
+        self._log(f"Preset loaded: {name}")
+
+    def _do_save_preset(self) -> None:
+        name, ok = QInputDialog.getText(self, "Save Preset", "Preset name:")
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+        container = self._format_combo.currentData() or ""
+        codec = self._codec_combo.currentData() or ""
+        bitrate = self._bitrate_combo.currentData() if self._bitrate_combo.isVisible() else None
+        channels = self._channels_combo.currentData() or 2
+        save_preset(name, container, codec, bitrate, channels)
+        self._repopulate_preset_combo(select_name=name)
+        self._log(f"Preset saved: {name}")
+
+    def _do_delete_preset(self) -> None:
+        user = load_user_presets()
+        if not user:
+            QMessageBox.information(self, "Delete Preset", "You have no saved presets to delete.")
+            return
+        name, ok = QInputDialog.getItem(
+            self, "Delete Preset", "Select preset to delete:",
+            list(user.keys()), 0, False,
+        )
+        if not ok:
+            return
+        delete_preset(name)
+        self._repopulate_preset_combo()
+        self._log(f"Preset deleted: {name}")
 
     # ------------------------------------------------------------------
     # Format / codec / bitrate options

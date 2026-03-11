@@ -49,6 +49,7 @@ src/afctui/
 ├── gui_main.py          # Windows GUI entry point, ffmpeg dependency handling
 ├── gui_scrubber.py      # PySide6 scrubber widget
 ├── player.py            # Audio playback via ffplay
+├── presets.py           # Preset storage: built-ins, load/save/delete, platform paths
 ├── scrubber.py          # Textual scrubber widget (TUI)
 └── utils.py             # Shared utilities: fmt_time, parse_trim_time, POPEN_FLAGS
 
@@ -111,6 +112,17 @@ afcgui.spec              # PyInstaller build spec for afcgui.exe
 - **`AudioScrubberWidget`**: PySide6 equivalent of `AudioScrubber`.
 - Emits `start_changed` / `end_changed` signals. Handles mouse and keyboard interaction.
 
+### `presets.py` — Preset Storage
+- **`BUILT_IN_PRESETS`**: Dict of read-only built-in presets (MP3 High Quality, Podcast Mono, Voice Mono, Lossless FLAC).
+- **`get_presets_path()`**: Returns platform-appropriate path for `presets.json`:
+  - Linux/macOS: `$XDG_DATA_HOME/afctui/presets.json` (falls back to `~/.local/share/afctui/presets.json`)
+  - Windows: `%APPDATA%\AFCTUI\presets.json`
+- **`all_presets()`**: Returns built-ins merged with user presets (user presets take precedence; built-ins first in output order).
+- **`save_preset(name, container, codec, bitrate, channels)`**: Persists a named user preset.
+- **`delete_preset(name)`**: Removes a user preset; no-op if name is a built-in or doesn't exist.
+- **`is_builtin(name)`**: Returns True if name refers to a built-in preset.
+- Both UIs display built-in presets with a `★` suffix to indicate they cannot be deleted.
+
 ## Conversion Options
 
 ### Container Formats & Compatible Codecs
@@ -138,6 +150,8 @@ Standard presets: 64k, 96k, 128k, 192k, 256k, 320k. Lossless formats (flac, wav)
 - Bitrate select is hidden/disabled when a lossless container is selected.
 - `CODEC_CONSTRAINTS` in `converter.py` is the single place to define per-codec forced ffmpeg args.
 - ffmpeg and ffplay are sourced from the system `$PATH` — no bundled binary.
+- Preset `_syncing_preset` flag prevents re-entrant events when presets programmatically set option widgets.
+- Built-in presets are displayed with a `★` suffix in both UIs; only user-created presets can be deleted.
 
 ## Drag-and-Drop
 - **TUI**: Textual's `on_paste` event handles file URIs pasted or dropped from a file manager.

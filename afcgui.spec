@@ -40,6 +40,7 @@ a = Analysis(
         'afctui.player',
         'afctui.gui_scrubber',
         'afctui.gui_app',
+        'afctui.presets',
     ],
     hookspath=[],
     hooksconfig={},

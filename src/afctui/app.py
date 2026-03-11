@@ -10,8 +10,9 @@ from urllib.parse import unquote
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, VerticalScroll
-from textual.events import Paste
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.events import Key, Paste
+from textual.screen import ModalScreen
 from textual.widgets import (
     Button,
     Footer,
@@ -25,6 +26,12 @@ from textual.widgets import (
 )
 
 from afctui.browse import FileBrowserScreen
+from afctui.presets import (
+    all_presets,
+    delete_preset,
+    load_user_presets,
+    save_preset,
+)
 from afctui.scrubber import AudioScrubber
 from afctui.utils import fmt_time, parse_trim_time
 from afctui.converter import (
@@ -40,6 +47,120 @@ from afctui.converter import (
     is_audio_file,
 )
 from afctui.player import play_audio, stop_audio
+
+
+_PRESET_SAVE = "__SAVE__"
+_PRESET_DELETE = "__DELETE__"
+
+
+class _PresetSaveScreen(ModalScreen[str | None]):
+    """Modal dialog for entering a new preset name."""
+
+    DEFAULT_CSS = """
+    _PresetSaveScreen {
+        align: center middle;
+    }
+    _PresetSaveScreen > Vertical {
+        width: 52;
+        height: auto;
+        border: thick $panel;
+        padding: 1 2;
+        background: $surface;
+    }
+    _PresetSaveScreen Label {
+        margin-bottom: 1;
+    }
+    _PresetSaveScreen Input {
+        margin-bottom: 1;
+    }
+    _PresetSaveScreen .dialog-buttons {
+        height: 3;
+        layout: horizontal;
+    }
+    _PresetSaveScreen .dialog-buttons Button {
+        margin-right: 1;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Label("Enter a name for this preset:")
+            yield Input(id="preset-name-input", placeholder="Preset name…")
+            with Horizontal(classes="dialog-buttons"):
+                yield Button("Save", variant="primary", id="dialog-save-btn")
+                yield Button("Cancel", id="dialog-cancel-btn")
+
+    def on_mount(self) -> None:
+        self.query_one("#preset-name-input", Input).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "dialog-save-btn":
+            name = self.query_one("#preset-name-input", Input).value.strip()
+            self.dismiss(name if name else None)
+        else:
+            self.dismiss(None)
+
+    def on_key(self, event: Key) -> None:
+        if event.key == "escape":
+            self.dismiss(None)
+
+
+class _PresetDeleteScreen(ModalScreen[str | None]):
+    """Modal dialog for selecting a user preset to delete."""
+
+    DEFAULT_CSS = """
+    _PresetDeleteScreen {
+        align: center middle;
+    }
+    _PresetDeleteScreen > Vertical {
+        width: 52;
+        height: auto;
+        border: thick $panel;
+        padding: 1 2;
+        background: $surface;
+    }
+    _PresetDeleteScreen Label {
+        margin-bottom: 1;
+    }
+    _PresetDeleteScreen Select {
+        margin-bottom: 1;
+    }
+    _PresetDeleteScreen .dialog-buttons {
+        height: 3;
+        layout: horizontal;
+    }
+    _PresetDeleteScreen .dialog-buttons Button {
+        margin-right: 1;
+    }
+    """
+
+    def __init__(self, user_preset_names: list[str]) -> None:
+        super().__init__()
+        self._names = user_preset_names
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Label("Select a preset to delete:")
+            yield Select(
+                [(name, name) for name in self._names],
+                value=self._names[0] if self._names else Select.BLANK,
+                id="preset-delete-select",
+                allow_blank=False,
+            )
+            with Horizontal(classes="dialog-buttons"):
+                yield Button("Delete", variant="error", id="dialog-delete-btn")
+                yield Button("Cancel", id="dialog-cancel-btn")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "dialog-delete-btn":
+            val = self.query_one("#preset-delete-select", Select).value
+            self.dismiss(str(val) if val != Select.BLANK else None)
+        else:
+            self.dismiss(None)
+
+    def on_key(self, event: Key) -> None:
+        if event.key == "escape":
+            self.dismiss(None)
 
 
 class AFCApp(App):
@@ -64,6 +185,7 @@ class AFCApp(App):
         self._current_input_path: str | None = None
         self._converted_path: str | None = None
         self._syncing_scrubber = False
+        self._syncing_preset = False
         self._prev_codec: str = ""
 
     # ------------------------------------------------------------------
@@ -95,6 +217,17 @@ class AFCApp(App):
                 yield Input(
                     placeholder="Output path (auto-derived)...",
                     id="output-path",
+                    classes="field-input",
+                )
+
+            # Preset row
+            with Horizontal(id="preset-row", classes="field-row"):
+                yield Label("Preset:", classes="field-label")
+                yield Select(
+                    [],
+                    value=Select.BLANK,
+                    id="preset-select",
+                    allow_blank=True,
                     classes="field-input",
                 )
 
@@ -166,6 +299,7 @@ class AFCApp(App):
 
     def on_mount(self) -> None:
         self.query_one("#progress-bar", ProgressBar).update(progress=0)
+        self._repopulate_preset_select()
         self._refresh_settings_summary()
         self.log_message("[dim]Ready. Drop an audio file or browse to select one.[/]")
         formats = ", ".join(sorted(SUPPORTED_INPUT_FORMATS))
@@ -292,6 +426,106 @@ class AFCApp(App):
     @on(Select.Changed, "#channels-select")
     def _on_channels_changed(self, _event: Select.Changed) -> None:
         self._refresh_settings_summary()
+
+    # ------------------------------------------------------------------
+    # Presets
+    # ------------------------------------------------------------------
+
+    def _repopulate_preset_select(self, select_name: str | None = None) -> None:
+        """Rebuild the preset Select options."""
+        presets = all_presets()
+        user = load_user_presets()
+
+        options: list[tuple[str, str]] = []
+        for name in presets:
+            label = name if name in user else f"{name}  ★"
+            options.append((label, name))
+        options.append(("Save as Preset…", _PRESET_SAVE))
+        options.append(("Delete Preset…", _PRESET_DELETE))
+
+        self._syncing_preset = True
+        preset_select = self.query_one("#preset-select", Select)
+        preset_select.set_options(options)
+        if select_name is not None:
+            preset_select.value = select_name
+        else:
+            preset_select.value = Select.BLANK
+        self._syncing_preset = False
+
+    @on(Select.Changed, "#preset-select")
+    def _on_preset_changed(self, event: Select.Changed) -> None:
+        if self._syncing_preset:
+            return
+        val = event.value
+        if val == Select.BLANK:
+            return
+        val = str(val)
+        if val == _PRESET_SAVE:
+            # Reset combo to blank, then open save dialog
+            self._syncing_preset = True
+            self.query_one("#preset-select", Select).value = Select.BLANK
+            self._syncing_preset = False
+            self.push_screen(_PresetSaveScreen(), self._on_save_preset_result)
+        elif val == _PRESET_DELETE:
+            self._syncing_preset = True
+            self.query_one("#preset-select", Select).value = Select.BLANK
+            self._syncing_preset = False
+            user = load_user_presets()
+            if not user:
+                self.log_message("[yellow]No saved presets to delete.[/]")
+                return
+            self.push_screen(_PresetDeleteScreen(list(user.keys())), self._on_delete_preset_result)
+        else:
+            presets = all_presets()
+            if val in presets:
+                self._apply_preset(val, presets[val])
+
+    def _apply_preset(self, name: str, preset: dict) -> None:
+        """Apply a preset's settings to all option selects."""
+        container = preset.get("container", "")
+        codec = preset.get("codec", "")
+        bitrate = preset.get("bitrate")
+        channels = preset.get("channels", 2)
+
+        self._syncing_preset = True
+
+        if container:
+            self.query_one("#format-select", Select).value = container
+            codecs = [(c, c) for c in OUTPUT_FORMATS.get(container, [])]
+            self.query_one("#codec-select", Select).set_options(codecs)
+
+        if codec:
+            self.query_one("#codec-select", Select).value = codec
+
+        if bitrate:
+            self.query_one("#bitrate-select", Select).value = bitrate
+
+        self.query_one("#channels-select", Select).value = channels
+
+        self._syncing_preset = False
+
+        self.query_one("#bitrate-row").display = self._should_show_bitrate()
+        self._refresh_settings_summary()
+        self.log_message(f"Preset loaded: [bold]{name}[/]")
+
+    def _on_save_preset_result(self, name: str | None) -> None:
+        if not name:
+            return
+        container = self.query_one("#format-select", Select).value
+        codec = self.query_one("#codec-select", Select).value
+        bitrate_visible = self.query_one("#bitrate-row").display
+        bitrate = self.query_one("#bitrate-select", Select).value if bitrate_visible else None
+        channels = self.query_one("#channels-select", Select).value
+        save_preset(str(name), str(container), str(codec), bitrate, int(channels))
+        self._repopulate_preset_select(select_name=name)
+        self.log_message(f"Preset saved: [bold]{name}[/]")
+
+    def _on_delete_preset_result(self, name: str | None) -> None:
+        if not name:
+            return
+        delete_preset(name)
+        self._repopulate_preset_select()
+        self.log_message(f"Preset deleted: [bold]{name}[/]")
 
     def _refresh_settings_summary(self) -> None:
         """Update the settings summary line above the log."""

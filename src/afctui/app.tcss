@@ -60,6 +60,7 @@ Screen {
     margin-right: 1;
 }
 
+#preset-row,
 #format-row,
 #codec-row,
 #bitrate-row,
