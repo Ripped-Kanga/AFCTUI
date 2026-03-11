@@ -23,7 +23,7 @@ SUPPORTED_INPUT_FORMATS: frozenset[str] = frozenset({
 OUTPUT_FORMATS: dict[str, list[str]] = {
     ".mp3":  ["libmp3lame"],
     ".flac": ["flac"],
-    ".wav":  ["pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_alaw"],
+    ".wav":  ["pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_alaw", "pcm_ulaw"],
     ".aac":  ["aac", "libfdk_aac"],
     ".m4a":  ["aac", "libfdk_aac"],
     ".ogg":  ["libvorbis", "libopus"],
@@ -40,8 +40,9 @@ DEFAULT_BITRATE = "192k"
 # Add an entry here when a codec requires fixed encoding parameters
 # rather than scattering codec-specific logic through convert_audio.
 CODEC_CONSTRAINTS: dict[str, list[str]] = {
-    # G.711 A-law: telephony codec, fixed 8 kHz sample rate
+    # G.711 A-law / μ-law: telephony codecs, fixed 8 kHz sample rate
     "pcm_alaw": ["-ar", "8000"],
+    "pcm_ulaw": ["-ar", "8000"],
 }
 
 

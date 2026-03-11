@@ -20,7 +20,7 @@ This is a hard rule. Specifically:
 - Log/status messages for the same events must carry the **same meaning**. Wording may differ to suit the interface style (Rich markup vs plain text), but the information conveyed must match.
 - Bug fixes applied to one interface must be **assessed for applicability** to the other and applied if relevant.
 - The shared layer (`converter.py`, `player.py`, `utils.py`) is the **single source of truth** for all business logic. Neither UI may re-implement logic that belongs there.
-- `pcm_alaw` (and any future codec-specific constraints) are defined once in `converter.CODEC_CONSTRAINTS`. Both UIs read from this — they do not hard-code codec behaviour themselves.
+- `pcm_alaw` / `pcm_ulaw` (and any future codec-specific constraints) are defined once in `converter.CODEC_CONSTRAINTS`. Both UIs read from this — they do not hard-code codec behaviour themselves.
 
 When in doubt: if a user of the TUI and a user of the GUI perform the same steps, they must get the same result.
 
@@ -130,7 +130,7 @@ afcgui.spec              # PyInstaller build spec for afcgui.exe
 |-----------|--------|
 | `.mp3`    | libmp3lame |
 | `.flac`   | flac |
-| `.wav`    | pcm_s16le, pcm_s24le, pcm_s32le, pcm_alaw |
+| `.wav`    | pcm_s16le, pcm_s24le, pcm_s32le, pcm_alaw, pcm_ulaw |
 | `.aac` / `.m4a` | aac, libfdk_aac |
 | `.ogg`    | libvorbis, libopus |
 | `.opus`   | libopus |

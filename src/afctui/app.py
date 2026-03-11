@@ -36,6 +36,7 @@ from afctui.scrubber import AudioScrubber
 from afctui.utils import fmt_time, parse_trim_time
 from afctui.converter import (
     BITRATE_OPTIONS,
+    CODEC_CONSTRAINTS,
     DEFAULT_BITRATE,
     LOSSLESS_CONTAINERS,
     OUTPUT_FORMATS,
@@ -430,9 +431,9 @@ class AFCApp(App):
         codec = str(event.value)
         if codec == self._prev_codec:
             return
-        if codec == "pcm_alaw":
-            self.log_message("[yellow]pcm_alaw (G.711 A-law): output will be resampled to 8000 Hz, 8-bit.[/]")
-        elif self._prev_codec == "pcm_alaw":
+        if codec in CODEC_CONSTRAINTS:
+            self.log_message(f"[yellow]{codec}: output will be resampled to 8000 Hz, 8-bit.[/]")
+        elif self._prev_codec in CODEC_CONSTRAINTS:
             self.log_message("[dim]8000 Hz resampling constraint removed.[/]")
         self._prev_codec = codec
         self._refresh_settings_summary()
@@ -571,8 +572,8 @@ class AFCApp(App):
         channels_name = "Mono" if channels == 1 else "Stereo"
         lossless = container in LOSSLESS_CONTAINERS or str(codec) == "copy"
 
-        if str(codec) == "pcm_alaw":
-            codec_display = "pcm_alaw  ⚠ 8000 Hz (fixed)"
+        if str(codec) in CODEC_CONSTRAINTS:
+            codec_display = f"{codec}  ⚠ 8000 Hz (fixed)"
         else:
             codec_display = str(codec)
 

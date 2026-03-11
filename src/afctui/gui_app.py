@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 
 from afctui.converter import (
     BITRATE_OPTIONS,
+    CODEC_CONSTRAINTS,
     DEFAULT_BITRATE,
     LOSSLESS_CONTAINERS,
     OUTPUT_FORMATS,
@@ -600,9 +601,9 @@ class AFCGuiApp(QMainWindow):
         codec = self._codec_combo.currentData() or ""
         if codec == self._prev_codec:
             return
-        if codec == "pcm_alaw":
-            self._log_warn("pcm_alaw (G.711 A-law): output will be resampled to 8000 Hz, 8-bit.")
-        elif self._prev_codec == "pcm_alaw":
+        if codec in CODEC_CONSTRAINTS:
+            self._log_warn(f"{codec}: output will be resampled to 8000 Hz, 8-bit.")
+        elif self._prev_codec in CODEC_CONSTRAINTS:
             self._log("8000 Hz resampling constraint removed.")
         self._prev_codec = codec
         self._refresh_settings_summary()
@@ -618,8 +619,8 @@ class AFCGuiApp(QMainWindow):
 
         lossless = container in LOSSLESS_CONTAINERS or codec == "copy"
 
-        if codec == "pcm_alaw":
-            codec_display = "pcm_alaw  ⚠ 8000 Hz (fixed)"
+        if codec in CODEC_CONSTRAINTS:
+            codec_display = f"{codec}  ⚠ 8000 Hz (fixed)"
         else:
             codec_display = codec or "—"
 
