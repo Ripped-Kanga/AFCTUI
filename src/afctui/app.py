@@ -199,6 +199,7 @@ class AFCApp(App):
         self._converted_path: str | None = None
         self._syncing_scrubber = False
         self._syncing_preset = False
+        self._pending_preset: tuple | None = None
         self._prev_codec: str = ""
 
     # ------------------------------------------------------------------
@@ -409,6 +410,11 @@ class AFCApp(App):
         codec_select = self.query_one("#codec-select", Select)
         codec_select.set_options([(c, c) for c in codecs])
 
+        # When a preset is being applied, _finish_preset_apply handles
+        # the remaining updates after the async event cycle completes.
+        if self._syncing_preset:
+            return
+
         self.query_one("#bitrate-row").display = self._should_show_bitrate()
         self._refresh_settings_summary()
 
@@ -489,25 +495,51 @@ class AFCApp(App):
         bitrate = preset.get("bitrate")
         channels = preset.get("channels", 2)
 
+        # Store pending state; _finish_preset_apply runs after _on_format_changed
+        # has processed (Textual Select.Changed messages are async, so the format
+        # change event fires AFTER _apply_preset returns and would overwrite the
+        # codec we set here without the deferred approach).
+        self._pending_preset = (container, codec, bitrate, channels, name)
         self._syncing_preset = True
 
         if container:
             self.query_one("#format-select", Select).value = container
-            codecs = [(c, c) for c in OUTPUT_FORMATS.get(container, [])]
-            self.query_one("#codec-select", Select).set_options(codecs)
-
-        if codec:
-            self.query_one("#codec-select", Select).value = codec
 
         if bitrate:
             self.query_one("#bitrate-select", Select).value = bitrate
 
         self.query_one("#channels-select", Select).value = channels
 
+        # Defer codec assignment + final updates to after the queued
+        # Select.Changed for the format has been processed.
+        self.call_after_refresh(self._finish_preset_apply)
+
+    def _finish_preset_apply(self) -> None:
+        """Complete preset application after format-change event has processed."""
+        if not self._pending_preset:
+            return
+        container, codec, bitrate, channels, name = self._pending_preset
+        self._pending_preset = None
+
+        if codec:
+            self.query_one("#codec-select", Select).value = codec
+
         self._syncing_preset = False
 
         self.query_one("#bitrate-row").display = self._should_show_bitrate()
         self._refresh_settings_summary()
+
+        if container:
+            current_output = self.query_one("#output-path", Input).value.strip()
+            if current_output:
+                self.query_one("#output-path", Input).value = str(
+                    Path(current_output).with_suffix(container)
+                )
+            elif self._current_input_path:
+                self.query_one("#output-path", Input).value = str(
+                    Path(self._current_input_path).with_suffix(container)
+                )
+
         self.log_message(f"Preset loaded: [bold]{name}[/]")
 
     def _on_save_preset_result(self, name: str | None) -> None:
