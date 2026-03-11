@@ -53,6 +53,19 @@ _PRESET_SAVE = "__SAVE__"
 _PRESET_DELETE = "__DELETE__"
 
 
+def _build_preset_options() -> list[tuple[str, str]]:
+    """Build the list of preset Select options (used at compose time and on refresh)."""
+    presets = all_presets()
+    user = load_user_presets()
+    options: list[tuple[str, str]] = []
+    for name in presets:
+        label = name if name in user else f"{name}  ★"
+        options.append((label, name))
+    options.append(("Save as Preset…", _PRESET_SAVE))
+    options.append(("Delete Preset…", _PRESET_DELETE))
+    return options
+
+
 class _PresetSaveScreen(ModalScreen[str | None]):
     """Modal dialog for entering a new preset name."""
 
@@ -224,8 +237,7 @@ class AFCApp(App):
             with Horizontal(id="preset-row", classes="field-row"):
                 yield Label("Preset:", classes="field-label")
                 yield Select(
-                    [],
-                    value=Select.BLANK,
+                    _build_preset_options(),
                     id="preset-select",
                     allow_blank=True,
                     classes="field-input",
@@ -433,23 +445,13 @@ class AFCApp(App):
 
     def _repopulate_preset_select(self, select_name: str | None = None) -> None:
         """Rebuild the preset Select options."""
-        presets = all_presets()
-        user = load_user_presets()
-
-        options: list[tuple[str, str]] = []
-        for name in presets:
-            label = name if name in user else f"{name}  ★"
-            options.append((label, name))
-        options.append(("Save as Preset…", _PRESET_SAVE))
-        options.append(("Delete Preset…", _PRESET_DELETE))
-
         self._syncing_preset = True
         preset_select = self.query_one("#preset-select", Select)
-        preset_select.set_options(options)
+        preset_select.set_options(_build_preset_options())
         if select_name is not None:
             preset_select.value = select_name
         else:
-            preset_select.value = Select.BLANK
+            preset_select.clear()
         self._syncing_preset = False
 
     @on(Select.Changed, "#preset-select")
@@ -463,12 +465,12 @@ class AFCApp(App):
         if val == _PRESET_SAVE:
             # Reset combo to blank, then open save dialog
             self._syncing_preset = True
-            self.query_one("#preset-select", Select).value = Select.BLANK
+            self.query_one("#preset-select", Select).clear()
             self._syncing_preset = False
             self.push_screen(_PresetSaveScreen(), self._on_save_preset_result)
         elif val == _PRESET_DELETE:
             self._syncing_preset = True
-            self.query_one("#preset-select", Select).value = Select.BLANK
+            self.query_one("#preset-select", Select).clear()
             self._syncing_preset = False
             user = load_user_presets()
             if not user:
