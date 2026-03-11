@@ -34,8 +34,9 @@ from afctui.converter import (
     get_audio_info,
     is_audio_file,
 )
-from afctui.gui_scrubber import AudioScrubberWidget, fmt_time
+from afctui.gui_scrubber import AudioScrubberWidget
 from afctui.player import play_audio, stop_audio
+from afctui.utils import fmt_time, parse_trim_time
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +70,7 @@ class _ConversionWorker(QThread):
         options: ConversionOptions,
         start_time: float,
         end_time: float | None,
+        audio_info: AudioInfo | None = None,
     ) -> None:
         super().__init__()
         self._input = input_path
@@ -76,6 +78,7 @@ class _ConversionWorker(QThread):
         self._options = options
         self._start = start_time
         self._end = end_time
+        self._audio_info = audio_info
         self._cancelled = False
 
     def cancel(self) -> None:
@@ -91,6 +94,7 @@ class _ConversionWorker(QThread):
                 self._end,
                 progress_callback=lambda pct: self.progress.emit(min(int(pct), 100)),
                 cancel_check=lambda: self._cancelled,
+                audio_info=self._audio_info,
             )
             self.finished.emit(not self._cancelled)
         except Exception as exc:
@@ -396,6 +400,7 @@ class AFCGuiApp(QMainWindow):
         worker = _ProbeWorker(path)
         worker.result.connect(lambda info: self._on_probe_done(path, info))
         worker.error.connect(lambda e: self._log_error(f"Probe failed: {e}"))
+        worker.finished.connect(worker.deleteLater)
         self._probe_worker = worker
         worker.start()
 
@@ -475,7 +480,7 @@ class AFCGuiApp(QMainWindow):
     def _on_trim_start_changed(self, text: str) -> None:
         if self._syncing_scrubber or self._scrubber.duration <= 0:
             return
-        t = self._parse_trim_time(text)
+        t = parse_trim_time(text)
         if t is not None:
             self._syncing_scrubber = True
             self._scrubber.set_start_time(t)
@@ -484,24 +489,11 @@ class AFCGuiApp(QMainWindow):
     def _on_trim_end_changed(self, text: str) -> None:
         if self._syncing_scrubber or self._scrubber.duration <= 0:
             return
-        t = self._parse_trim_time(text)
+        t = parse_trim_time(text)
         if t is not None:
             self._syncing_scrubber = True
             self._scrubber.set_end_time(t)
             self._syncing_scrubber = False
-
-    @staticmethod
-    def _parse_trim_time(value: str) -> float | None:
-        value = value.strip()
-        if not value:
-            return None
-        try:
-            if ":" in value:
-                parts = value.split(":", 1)
-                return int(parts[0]) * 60 + float(parts[1])
-            return float(value)
-        except ValueError:
-            return None
 
     # ------------------------------------------------------------------
     # Conversion
@@ -564,10 +556,14 @@ class AFCGuiApp(QMainWindow):
         self._convert_btn.setText("Converting…")
         self._progress.setValue(0)
 
-        worker = _ConversionWorker(input_path, output_path, options, start_time, end_time)
+        worker = _ConversionWorker(
+            input_path, output_path, options, start_time, end_time,
+            audio_info=self._audio_info,
+        )
         worker.progress.connect(self._progress.setValue)
         worker.error.connect(self._on_conversion_error)
         worker.finished.connect(lambda ok: self._on_conversion_finished(ok, output_path))
+        worker.finished.connect(worker.deleteLater)
         self._conversion_worker = worker
         worker.start()
 
@@ -616,6 +612,7 @@ class AFCGuiApp(QMainWindow):
         self._stop_btn.setEnabled(True)
         worker = _PlaybackWorker(self._current_input_path)
         worker.stopped.connect(self._on_playback_stopped)
+        worker.finished.connect(worker.deleteLater)
         self._playback_worker = worker
         worker.start()
 
@@ -628,6 +625,7 @@ class AFCGuiApp(QMainWindow):
         self._stop_btn.setEnabled(True)
         worker = _PlaybackWorker(self._converted_path)
         worker.stopped.connect(self._on_playback_stopped)
+        worker.finished.connect(worker.deleteLater)
         self._playback_worker = worker
         worker.start()
 
@@ -662,20 +660,17 @@ class AFCGuiApp(QMainWindow):
     def _log(self, msg: str) -> None:
         self._log_edit.append(msg)
 
-    def _log_warn(self, msg: str) -> None:
+    def _log_coloured(self, msg: str, colour: str) -> None:
         fmt = QTextCharFormat()
-        fmt.setForeground(QColor("#E8A000"))
+        fmt.setForeground(QColor(colour))
         cursor = self._log_edit.textCursor()
         cursor.movePosition(cursor.MoveOperation.End)
         cursor.insertText(msg + "\n", fmt)
         self._log_edit.setTextCursor(cursor)
         self._log_edit.ensureCursorVisible()
 
+    def _log_warn(self, msg: str) -> None:
+        self._log_coloured(msg, "#E8A000")
+
     def _log_error(self, msg: str) -> None:
-        fmt = QTextCharFormat()
-        fmt.setForeground(QColor("#D94040"))
-        cursor = self._log_edit.textCursor()
-        cursor.movePosition(cursor.MoveOperation.End)
-        cursor.insertText(msg + "\n", fmt)
-        self._log_edit.setTextCursor(cursor)
-        self._log_edit.ensureCursorVisible()
+        self._log_coloured(msg, "#D94040")

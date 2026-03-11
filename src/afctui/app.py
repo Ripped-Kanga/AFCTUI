@@ -25,7 +25,8 @@ from textual.widgets import (
 )
 
 from afctui.browse import FileBrowserScreen
-from afctui.scrubber import AudioScrubber, fmt_time
+from afctui.scrubber import AudioScrubber
+from afctui.utils import fmt_time, parse_trim_time
 from afctui.converter import (
     BITRATE_OPTIONS,
     DEFAULT_BITRATE,
@@ -61,7 +62,9 @@ class AFCApp(App):
         self._playback_process: subprocess.Popen | None = None
         self._audio_info: AudioInfo | None = None
         self._current_input_path: str | None = None
+        self._converted_path: str | None = None
         self._syncing_scrubber = False
+        self._prev_codec: str = ""
 
     # ------------------------------------------------------------------
     # Layout
@@ -202,6 +205,8 @@ class AFCApp(App):
             return
 
         self._current_input_path = resolved
+        self._converted_path = None
+        self.query_one("#play-converted-btn", Button).disabled = True
 
         self.query_one("#input-path", Input).value = path
         self._update_output_path(path)
@@ -225,7 +230,6 @@ class AFCApp(App):
     def _on_probe_complete(self, path: str, info: AudioInfo) -> None:
         self._audio_info = info
         self.query_one("#play-original-btn", Button).disabled = False
-        self.query_one("#play-converted-btn", Button).disabled = True
 
         # Initialise scrubber and trim inputs to full file duration
         scrubber = self.query_one("#scrubber", AudioScrubber)
@@ -268,8 +272,16 @@ class AFCApp(App):
     @on(Select.Changed, "#codec-select")
     def _on_codec_changed(self, event: Select.Changed) -> None:
         self.query_one("#bitrate-row").display = self._should_show_bitrate()
-        if event.value == "pcm_alaw":
-            self.log_message("[dim]pcm_alaw (G.711 A-law): output will be resampled to 8000 Hz, 8-bit.[/]")
+        codec = str(event.value)
+        if codec == self._prev_codec:
+            return
+        if codec == "pcm_alaw":
+            self.log_message("[yellow]pcm_alaw (G.711 A-law): output will be resampled to 8000 Hz, 8-bit.[/]")
+        elif self._prev_codec == "pcm_alaw":
+            self.log_message(f"[dim]Codec changed to {codec} — 8000 Hz resampling no longer applies.[/]")
+        elif codec:
+            self.log_message(f"[dim]Codec: {codec}[/]")
+        self._prev_codec = codec
 
     def _should_show_bitrate(self) -> bool:
         container = self.query_one("#format-select", Select).value
@@ -298,19 +310,6 @@ class AFCApp(App):
         self.query_one("#trim-end", Input).value = fmt_time(event.value)
         self._syncing_scrubber = False
 
-    def _parse_trim_input(self, value: str) -> float | None:
-        """Parse a trim input value (M:SS.s or bare seconds) into seconds."""
-        value = value.strip()
-        if not value:
-            return None
-        try:
-            if ":" in value:
-                parts = value.split(":", 1)
-                return int(parts[0]) * 60 + float(parts[1])
-            return float(value)
-        except ValueError:
-            return None
-
     # ------------------------------------------------------------------
     # Input handlers
     # ------------------------------------------------------------------
@@ -332,7 +331,7 @@ class AFCApp(App):
         if event.input.id in ("trim-start", "trim-end") and not self._syncing_scrubber:
             scrubber = self.query_one("#scrubber", AudioScrubber)
             if scrubber.duration > 0:
-                t = self._parse_trim_input(event.value)
+                t = parse_trim_time(event.value)
                 if t is not None:
                     self._syncing_scrubber = True
                     if event.input.id == "trim-start":
@@ -438,8 +437,8 @@ class AFCApp(App):
         self._cancelled = False
 
         btn = self.query_one("#convert-btn", Button)
-        self.call_from_thread(btn.__setattr__, "disabled", True)
-        self.call_from_thread(btn.__setattr__, "label", "Converting...")
+        self.call_from_thread(setattr, btn, "disabled", True)
+        self.call_from_thread(setattr, btn, "label", "Converting...")
 
         progress_bar = self.query_one("#progress-bar", ProgressBar)
         self.call_from_thread(progress_bar.update, progress=0)
@@ -471,6 +470,7 @@ class AFCApp(App):
                 end_time=end_time,
                 progress_callback=on_progress,
                 cancel_check=check_cancel,
+                audio_info=self._audio_info,
             )
 
             if self._cancelled:
@@ -484,16 +484,17 @@ class AFCApp(App):
                     f"[green]Done![/] Saved to [bold]{output_path}[/] ({size_mb:.1f} MB)",
                 )
                 on_progress(100)
+                self._converted_path = output_path
                 play_btn = self.query_one("#play-converted-btn", Button)
-                self.call_from_thread(play_btn.__setattr__, "disabled", False)
+                self.call_from_thread(setattr, play_btn, "disabled", False)
 
         except Exception as e:
             self.call_from_thread(self.log_message, f"[red]Error:[/] {e}")
         finally:
             self._converting = False
             self._cancelled = False
-            self.call_from_thread(btn.__setattr__, "disabled", False)
-            self.call_from_thread(btn.__setattr__, "label", "Convert")
+            self.call_from_thread(setattr, btn, "disabled", False)
+            self.call_from_thread(setattr, btn, "label", "Convert")
 
     # ------------------------------------------------------------------
     # Playback workers
@@ -508,19 +509,21 @@ class AFCApp(App):
 
         btn = self.query_one("#play-original-btn", Button)
         stop_btn = self.query_one("#stop-btn", Button)
-        self.call_from_thread(btn.__setattr__, "disabled", True)
-        self.call_from_thread(stop_btn.__setattr__, "disabled", False)
+        self.call_from_thread(setattr, btn, "disabled", True)
+        self.call_from_thread(setattr, stop_btn, "disabled", False)
 
         self._playback_process = play_audio(self._current_input_path)
         self._playback_process.wait()
 
-        self.call_from_thread(btn.__setattr__, "disabled", False)
-        self.call_from_thread(stop_btn.__setattr__, "disabled", True)
+        self.call_from_thread(setattr, btn, "disabled", False)
+        self.call_from_thread(setattr, stop_btn, "disabled", True)
 
     @work(thread=True)
     def _do_play_converted(self) -> None:
-        output_path = self.query_one("#output-path", Input).value.strip()
-        if not output_path or not os.path.isfile(output_path):
+        # Capture path before entering thread to avoid reading widget state
+        # from a background thread.
+        converted_path = self._converted_path
+        if not converted_path or not os.path.isfile(converted_path):
             self.call_from_thread(self.log_message, "[red]Converted file not found.[/]")
             return
         stop_audio(self._playback_process)
@@ -528,21 +531,21 @@ class AFCApp(App):
 
         btn = self.query_one("#play-converted-btn", Button)
         stop_btn = self.query_one("#stop-btn", Button)
-        self.call_from_thread(btn.__setattr__, "disabled", True)
-        self.call_from_thread(stop_btn.__setattr__, "disabled", False)
+        self.call_from_thread(setattr, btn, "disabled", True)
+        self.call_from_thread(setattr, stop_btn, "disabled", False)
 
-        self._playback_process = play_audio(output_path)
+        self._playback_process = play_audio(converted_path)
         self._playback_process.wait()
 
-        self.call_from_thread(btn.__setattr__, "disabled", False)
-        self.call_from_thread(stop_btn.__setattr__, "disabled", True)
+        self.call_from_thread(setattr, btn, "disabled", False)
+        self.call_from_thread(setattr, stop_btn, "disabled", True)
 
     @work(thread=True)
     def _do_stop_playback(self) -> None:
         stop_audio(self._playback_process)
         self._playback_process = None
         stop_btn = self.query_one("#stop-btn", Button)
-        self.call_from_thread(stop_btn.__setattr__, "disabled", True)
+        self.call_from_thread(setattr, stop_btn, "disabled", True)
 
     def on_unmount(self) -> None:
         stop_audio(self._playback_process)

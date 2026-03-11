@@ -8,13 +8,7 @@ from textual.widget import Widget
 from textual.events import Key, MouseDown, MouseMove, MouseUp
 from rich.text import Text
 
-
-def fmt_time(seconds: float) -> str:
-    """Format seconds as M:SS.s"""
-    seconds = max(0.0, seconds)
-    m = int(seconds // 60)
-    s = seconds % 60
-    return f"{m}:{s:04.1f}"
+from afctui.utils import fmt_time
 
 
 class AudioScrubber(Widget, can_focus=True):
