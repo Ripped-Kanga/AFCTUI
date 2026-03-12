@@ -40,7 +40,6 @@ from afctui.converter import (
 from afctui.gui_scrubber import AudioScrubberWidget
 from afctui.player import play_audio, stop_audio
 from afctui.presets import (
-    BUILT_IN_PRESETS,
     all_presets,
     delete_preset,
     load_user_presets,
