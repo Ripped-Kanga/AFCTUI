@@ -34,7 +34,9 @@ a = Analysis(
     ['src/afctui/gui_main.py'],
     pathex=['src'],
     binaries=[],
-    datas=[],
+    datas=[
+        (os.path.join('src', 'afctui', 'assets', 'afctui.ico'), 'assets'),
+    ],
     hiddenimports=[
         'afctui.utils',
         'afctui.converter',
