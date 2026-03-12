@@ -77,5 +77,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,          # Set to an .ico path here to add a custom app icon
+    icon='src/afctui/assets/afctui.ico',
 )
