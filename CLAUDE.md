@@ -39,8 +39,11 @@ When in doubt: if a user of the TUI and a user of the GUI perform the same steps
 ## Source Layout
 ```
 src/afctui/
+├── assets/
+│   ├── afctui.ico       # Windows icon (7 sizes: 16–256 px, 32bpp PNG layers)
+│   └── afctui.svg       # Vector icon (Linux desktop integration)
 ├── __init__.py          # Package version
-├── __main__.py          # TUI entry point (runs AFCApp)
+├── __main__.py          # TUI entry point; --install-desktop / --uninstall-desktop
 ├── app.py               # Main Textual App (TUI)
 ├── app.tcss             # Textual CSS stylesheet
 ├── browse.py            # FileBrowserScreen (DirectoryTree, no hidden files/folders)
@@ -54,6 +57,10 @@ src/afctui/
 └── utils.py             # Shared utilities: fmt_time, parse_trim_time, POPEN_FLAGS
 
 afcgui.spec              # PyInstaller build spec for afcgui.exe
+afcgui.iss               # Inno Setup installer script (produces afcgui-setup-<ver>.exe)
+
+.github/workflows/
+└── build-windows-exe.yml  # CI: builds exe + installer on push to v* tags
 ```
 
 ## Module Responsibilities
@@ -63,11 +70,18 @@ afcgui.spec              # PyInstaller build spec for afcgui.exe
 - **`parse_trim_time(value)`**: Parses `M:SS.s` or bare float strings into seconds. Used by both UIs.
 - **`POPEN_FLAGS`**: `CREATE_NO_WINDOW` on Windows, empty dict on POSIX. Used by `converter.py` and `player.py`.
 
+### `__main__.py` — TUI Entry Point
+- Runs `check_ffmpeg()` then launches `AFCApp`.
+- **`--install-desktop`**: Writes a `.desktop` file to `~/.local/share/applications/` and copies `afctui.svg` to `~/.local/share/icons/hicolor/scalable/apps/`. Linux only.
+- **`--uninstall-desktop`**: Removes the above files if present.
+
 ### `app.py` — TUI Application
 - **`AFCApp`**: Root Textual `App`. Manages UI state, input validation, wires together all widgets.
   - Input path field + Browse button + drag-and-drop drop zone
   - Output path field (auto-derived from input; editable)
   - Conversion options: container format, codec, bitrate, channels (mono/stereo)
+  - Presets: dropdown + save/delete buttons; built-in presets marked with `★`
+  - Settings summary line (live one-liner above the log)
   - Playback controls: play original / play converted buttons
   - Conversion runs in a background thread via `@work(thread=True)`
   - Progress tracked via `ProgressBar`, logs written to `RichLog`
@@ -78,8 +92,11 @@ afcgui.spec              # PyInstaller build spec for afcgui.exe
 - **`AFCGuiApp`**: PySide6 `QMainWindow`. Feature-equivalent to `AFCApp`.
   - All long-running work runs in `QThread` subclasses (`_ProbeWorker`, `_ConversionWorker`, `_PlaybackWorker`)
   - Workers call `deleteLater()` on `finished` to prevent Qt memory leaks
+  - Window and taskbar icon set via `QIcon` from the bundled `afctui.ico` asset
   - Colour-coded log: errors in red (`#D94040`), warnings in amber (`#E8A000`), info in default
   - `_log_coloured(msg, colour)` is the single implementation; `_log_warn` and `_log_error` delegate to it
+  - Presets: combo box + save/delete buttons; built-in presets marked with `★`
+  - Settings summary label (live one-liner above the log)
 
 ### `converter.py` — Conversion Engine
 - **`AudioInfo`** dataclass: `duration`, `codec`, `bitrate`, `channels`, `sample_rate`
@@ -135,6 +152,8 @@ afcgui.spec              # PyInstaller build spec for afcgui.exe
 | `.ogg`    | libvorbis, libopus |
 | `.opus`   | libopus |
 | `.mka`    | copy, libvorbis, libopus, aac |
+
+`pcm_alaw` (G.711 A-law) and `pcm_mulaw` (G.711 μ-law) are telephony codecs fixed at 8000 Hz via `CODEC_CONSTRAINTS`.
 
 ### Bitrate Options
 Standard presets: 64k, 96k, 128k, 192k, 256k, 320k. Lossless formats (flac, wav) ignore bitrate.
@@ -193,6 +212,14 @@ pip install pyinstaller ".[gui]"
 pyinstaller afcgui.spec
 # Output: dist/afcgui.exe
 ```
+
+### Building the Windows installer
+```bash
+iscc /DAppVersion=<version> afcgui.iss
+# Output: dist/afcgui-setup-<version>.exe
+```
+
+CI builds and uploads the installer to GitHub Releases on any `v*` tag push.
 
 ## ffmpeg Dependency Check
 On startup, `check_ffmpeg()` verifies both `ffmpeg` and `ffplay` exist on `$PATH`. If missing:

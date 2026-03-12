@@ -9,11 +9,14 @@ Both use system ffmpeg under the hood.
 
 ## Features
 
-- **Drag and drop** — drop an audio file directly into the terminal (TUI); file picker dialog (GUI)
+- **Drag and drop** — drop an audio file directly into the terminal (TUI); drag onto the window (GUI)
 - **Audio playback** — play the original file and the converted output without leaving the app
 - **Trim / scrubber** — visual timeline with adjustable start and end handles to convert only a portion of the file
 - **Conversion options** — container format, codec, bitrate (hidden for lossless), mono/stereo channels
+- **Presets** — save and load named conversion settings; four built-in presets included (★ = read-only)
+- **Settings summary** — live one-line summary of active options displayed above the log
 - **Progress tracking** — live progress bar and cancellation via `Escape`
+- **Desktop integration** (TUI, Linux) — `--install-desktop` / `--uninstall-desktop` installs a `.desktop` entry and SVG icon
 
 ## Supported Formats
 
@@ -26,14 +29,14 @@ Both use system ffmpeg under the hood.
 |--------|--------|
 | MP3 | libmp3lame |
 | FLAC | flac |
-| WAV | pcm_s16le, pcm_s24le, pcm_s32le, pcm_alaw\* |
+| WAV | pcm_s16le, pcm_s24le, pcm_s32le, pcm_alaw\*, pcm_mulaw\* |
 | AAC | aac, libfdk_aac |
 | M4A | aac, libfdk_aac |
 | OGG | libvorbis, libopus |
 | OPUS | libopus |
 | MKA | copy, libvorbis, libopus, aac |
 
-\* `pcm_alaw` (G.711 A-law) is fixed at 8000 Hz, 8-bit — used for telephony.
+\* `pcm_alaw` (G.711 A-law) and `pcm_mulaw` (G.711 μ-law) are telephony codecs fixed at 8000 Hz.
 
 ---
 
@@ -53,11 +56,22 @@ Once ffmpeg is installed, restart the app.
 ### Building the exe
 
 ```bash
-pip install pyinstaller PySide6
+pip install pyinstaller ".[gui]"
 pyinstaller afcgui.spec
 ```
 
 The resulting executable is at `dist/afcgui.exe`.
+
+### Building the installer
+
+The project ships an [Inno Setup](https://jrsoftware.org/isinfo.php) script (`afcgui.iss`) that wraps the exe into a standard Windows installer:
+
+```
+iscc /DAppVersion=<version> afcgui.iss
+# Output: dist/afcgui-setup-<version>.exe
+```
+
+The CI workflow (`.github/workflows/build-windows-exe.yml`) builds and uploads the installer automatically on tagged releases.
 
 ---
 
@@ -94,6 +108,15 @@ pipx install git+https://github.com/Ripped-Kanga/AFCTUI.git
 afctui
 ```
 
+### Desktop integration (Linux)
+
+Install a `.desktop` launcher and SVG icon into `~/.local/share/`:
+
+```bash
+afctui --install-desktop    # install
+afctui --uninstall-desktop  # remove
+```
+
 ### Keyboard shortcuts
 
 | Key | Action |
@@ -120,8 +143,11 @@ afctui
 
 ```
 src/afctui/
+├── assets/
+│   ├── afctui.ico    — Windows icon (7 sizes, 16–256 px)
+│   └── afctui.svg    — Vector icon (Linux desktop integration)
 ├── __init__.py       — package version
-├── __main__.py       — TUI entry point, ffmpeg startup check
+├── __main__.py       — TUI entry point, ffmpeg check, --install-desktop
 ├── app.py            — main Textual application
 ├── app.tcss          — TUI stylesheet
 ├── browse.py         — FileBrowserScreen modal (_AudioTree, no hidden files)
@@ -130,9 +156,12 @@ src/afctui/
 ├── gui_main.py       — Windows GUI entry point
 ├── gui_scrubber.py   — PySide6 scrubber widget
 ├── player.py         — ffplay-based audio playback
-└── scrubber.py       — Textual scrubber widget (TUI trim timeline)
+├── presets.py        — preset storage: built-ins, load/save/delete
+├── scrubber.py       — Textual scrubber widget (TUI trim timeline)
+└── utils.py          — shared utilities: fmt_time, parse_trim_time, POPEN_FLAGS
 
 afcgui.spec           — PyInstaller build spec for afcgui.exe
+afcgui.iss            — Inno Setup installer script
 ```
 
 ## License
