@@ -1,4 +1,4 @@
-name: Build Windows EXE
+name: Build Windows Installer
 
 on:
   push:
@@ -30,15 +30,28 @@ jobs:
       - name: Build EXE
         run: pyinstaller afcgui.spec
 
-      - name: Upload artifact
+      - name: Get version from tag
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "VERSION=dev" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build installer
+        run: iscc /DAppVersion=${{ steps.version.outputs.VERSION }} afcgui.iss
+
+      - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: afcgui-windows
-          path: dist/afcgui.exe
+          name: afcgui-installer-windows
+          path: dist/afcgui-setup-${{ steps.version.outputs.VERSION }}.exe
           if-no-files-found: error
 
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/afcgui.exe
+          files: dist/afcgui-setup-${{ steps.version.outputs.VERSION }}.exe

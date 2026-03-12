@@ -10,8 +10,9 @@ from urllib.parse import unquote
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, VerticalScroll
-from textual.events import Paste
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.events import Key, Paste
+from textual.screen import ModalScreen
 from textual.widgets import (
     Button,
     Footer,
@@ -25,9 +26,17 @@ from textual.widgets import (
 )
 
 from afctui.browse import FileBrowserScreen
-from afctui.scrubber import AudioScrubber, fmt_time
+from afctui.presets import (
+    all_presets,
+    delete_preset,
+    load_user_presets,
+    save_preset,
+)
+from afctui.scrubber import AudioScrubber
+from afctui.utils import fmt_time, parse_trim_time
 from afctui.converter import (
     BITRATE_OPTIONS,
+    CODEC_CONSTRAINTS,
     DEFAULT_BITRATE,
     LOSSLESS_CONTAINERS,
     OUTPUT_FORMATS,
@@ -39,6 +48,133 @@ from afctui.converter import (
     is_audio_file,
 )
 from afctui.player import play_audio, stop_audio
+
+
+_PRESET_SAVE = "__SAVE__"
+_PRESET_DELETE = "__DELETE__"
+
+
+def _build_preset_options() -> list[tuple[str, str]]:
+    """Build the list of preset Select options (used at compose time and on refresh)."""
+    presets = all_presets()
+    user = load_user_presets()
+    options: list[tuple[str, str]] = []
+    for name in presets:
+        label = name if name in user else f"{name}  ★"
+        options.append((label, name))
+    options.append(("Save as Preset…", _PRESET_SAVE))
+    options.append(("Delete Preset…", _PRESET_DELETE))
+    return options
+
+
+class _PresetSaveScreen(ModalScreen[str | None]):
+    """Modal dialog for entering a new preset name."""
+
+    DEFAULT_CSS = """
+    _PresetSaveScreen {
+        align: center middle;
+    }
+    _PresetSaveScreen > Vertical {
+        width: 52;
+        height: auto;
+        border: thick $panel;
+        padding: 1 2;
+        background: $surface;
+    }
+    _PresetSaveScreen Label {
+        margin-bottom: 1;
+    }
+    _PresetSaveScreen Input {
+        margin-bottom: 1;
+    }
+    _PresetSaveScreen .dialog-buttons {
+        height: 3;
+        layout: horizontal;
+    }
+    _PresetSaveScreen .dialog-buttons Button {
+        margin-right: 1;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Label("Enter a name for this preset:")
+            yield Input(id="preset-name-input", placeholder="Preset name…")
+            with Horizontal(classes="dialog-buttons"):
+                yield Button("Save", variant="primary", id="dialog-save-btn")
+                yield Button("Cancel", id="dialog-cancel-btn")
+
+    def on_mount(self) -> None:
+        self.query_one("#preset-name-input", Input).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "dialog-save-btn":
+            name = self.query_one("#preset-name-input", Input).value.strip()
+            self.dismiss(name if name else None)
+        else:
+            self.dismiss(None)
+
+    def on_key(self, event: Key) -> None:
+        if event.key == "escape":
+            self.dismiss(None)
+
+
+class _PresetDeleteScreen(ModalScreen[str | None]):
+    """Modal dialog for selecting a user preset to delete."""
+
+    DEFAULT_CSS = """
+    _PresetDeleteScreen {
+        align: center middle;
+    }
+    _PresetDeleteScreen > Vertical {
+        width: 52;
+        height: auto;
+        border: thick $panel;
+        padding: 1 2;
+        background: $surface;
+    }
+    _PresetDeleteScreen Label {
+        margin-bottom: 1;
+    }
+    _PresetDeleteScreen Select {
+        margin-bottom: 1;
+    }
+    _PresetDeleteScreen .dialog-buttons {
+        height: 3;
+        layout: horizontal;
+    }
+    _PresetDeleteScreen .dialog-buttons Button {
+        margin-right: 1;
+    }
+    """
+
+    def __init__(self, user_preset_names: list[str]) -> None:
+        super().__init__()
+        self._names = user_preset_names
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Label("Select a preset to delete:")
+            yield Select(
+                [(name, name) for name in self._names],
+                value=self._names[0] if self._names else Select.BLANK,
+                id="preset-delete-select",
+                allow_blank=False,
+            )
+            with Horizontal(classes="dialog-buttons"):
+                yield Button("Delete", variant="error", id="dialog-delete-btn")
+                yield Button("Cancel", id="dialog-cancel-btn")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "dialog-delete-btn":
+            val = self.query_one("#preset-delete-select", Select).value
+            self.dismiss(str(val) if val != Select.BLANK else None)
+        else:
+            self.dismiss(None)
+
+    def on_key(self, event: Key) -> None:
+        if event.key == "escape":
+            self.dismiss(None)
 
 
 class AFCApp(App):
@@ -61,7 +197,11 @@ class AFCApp(App):
         self._playback_process: subprocess.Popen | None = None
         self._audio_info: AudioInfo | None = None
         self._current_input_path: str | None = None
+        self._converted_path: str | None = None
         self._syncing_scrubber = False
+        self._syncing_preset = False
+        self._pending_preset: tuple | None = None
+        self._prev_codec: str = ""
 
     # ------------------------------------------------------------------
     # Layout
@@ -92,6 +232,16 @@ class AFCApp(App):
                 yield Input(
                     placeholder="Output path (auto-derived)...",
                     id="output-path",
+                    classes="field-input",
+                )
+
+            # Preset row
+            with Horizontal(id="preset-row", classes="field-row"):
+                yield Label("Preset:", classes="field-label")
+                yield Select(
+                    _build_preset_options(),
+                    id="preset-select",
+                    allow_blank=True,
                     classes="field-input",
                 )
 
@@ -157,11 +307,14 @@ class AFCApp(App):
 
             yield Button("Convert", variant="primary", id="convert-btn")
             yield ProgressBar(total=100, show_eta=False, id="progress-bar")
+            yield Static("", id="settings-summary")
             yield RichLog(highlight=True, markup=True, id="log")
         yield Footer()
 
     def on_mount(self) -> None:
         self.query_one("#progress-bar", ProgressBar).update(progress=0)
+        self._repopulate_preset_select()
+        self._refresh_settings_summary()
         self.log_message("[dim]Ready. Drop an audio file or browse to select one.[/]")
         formats = ", ".join(sorted(SUPPORTED_INPUT_FORMATS))
         self.log_message(f"[dim]Supported input formats: {formats}[/]")
@@ -189,7 +342,7 @@ class AFCApp(App):
             self.set_input_file(path)
         else:
             suffix = Path(path).suffix or "(none)"
-            self.log_message(f"[red]Unsupported format:[/] {suffix}")
+            self.log_message(f"[yellow]Unsupported format:[/] {suffix}")
 
     # ------------------------------------------------------------------
     # File selection
@@ -202,6 +355,8 @@ class AFCApp(App):
             return
 
         self._current_input_path = resolved
+        self._converted_path = None
+        self.query_one("#play-converted-btn", Button).disabled = True
 
         self.query_one("#input-path", Input).value = path
         self._update_output_path(path)
@@ -225,7 +380,6 @@ class AFCApp(App):
     def _on_probe_complete(self, path: str, info: AudioInfo) -> None:
         self._audio_info = info
         self.query_one("#play-original-btn", Button).disabled = False
-        self.query_one("#play-converted-btn", Button).disabled = True
 
         # Initialise scrubber and trim inputs to full file duration
         scrubber = self.query_one("#scrubber", AudioScrubber)
@@ -257,7 +411,13 @@ class AFCApp(App):
         codec_select = self.query_one("#codec-select", Select)
         codec_select.set_options([(c, c) for c in codecs])
 
+        # When a preset is being applied, _finish_preset_apply handles
+        # the remaining updates after the async event cycle completes.
+        if self._syncing_preset:
+            return
+
         self.query_one("#bitrate-row").display = self._should_show_bitrate()
+        self._refresh_settings_summary()
 
         current_output = self.query_one("#output-path", Input).value.strip()
         if current_output:
@@ -268,8 +428,162 @@ class AFCApp(App):
     @on(Select.Changed, "#codec-select")
     def _on_codec_changed(self, event: Select.Changed) -> None:
         self.query_one("#bitrate-row").display = self._should_show_bitrate()
-        if event.value == "pcm_alaw":
-            self.log_message("[dim]pcm_alaw (G.711 A-law): output will be resampled to 8000 Hz, 8-bit.[/]")
+        codec = str(event.value)
+        if codec == self._prev_codec:
+            return
+        if codec in CODEC_CONSTRAINTS:
+            self.log_message(f"[yellow]{codec}: output will be resampled to 8000 Hz, 8-bit.[/]")
+        elif self._prev_codec in CODEC_CONSTRAINTS:
+            self.log_message("[dim]8000 Hz resampling constraint removed.[/]")
+        self._prev_codec = codec
+        self._refresh_settings_summary()
+
+    @on(Select.Changed, "#bitrate-select")
+    def _on_bitrate_changed(self, _event: Select.Changed) -> None:
+        self._refresh_settings_summary()
+
+    @on(Select.Changed, "#channels-select")
+    def _on_channels_changed(self, _event: Select.Changed) -> None:
+        self._refresh_settings_summary()
+
+    # ------------------------------------------------------------------
+    # Presets
+    # ------------------------------------------------------------------
+
+    def _repopulate_preset_select(self, select_name: str | None = None) -> None:
+        """Rebuild the preset Select options."""
+        self._syncing_preset = True
+        preset_select = self.query_one("#preset-select", Select)
+        preset_select.set_options(_build_preset_options())
+        if select_name is not None:
+            preset_select.value = select_name
+        else:
+            preset_select.clear()
+        self._syncing_preset = False
+
+    @on(Select.Changed, "#preset-select")
+    def _on_preset_changed(self, event: Select.Changed) -> None:
+        if self._syncing_preset:
+            return
+        val = event.value
+        if val == Select.BLANK:
+            return
+        val = str(val)
+        if val == _PRESET_SAVE:
+            # Reset combo to blank, then open save dialog
+            self._syncing_preset = True
+            self.query_one("#preset-select", Select).clear()
+            self._syncing_preset = False
+            self.push_screen(_PresetSaveScreen(), self._on_save_preset_result)
+        elif val == _PRESET_DELETE:
+            self._syncing_preset = True
+            self.query_one("#preset-select", Select).clear()
+            self._syncing_preset = False
+            user = load_user_presets()
+            if not user:
+                self.log_message("[yellow]No saved presets to delete.[/]")
+                return
+            self.push_screen(_PresetDeleteScreen(list(user.keys())), self._on_delete_preset_result)
+        else:
+            presets = all_presets()
+            if val in presets:
+                self._apply_preset(val, presets[val])
+
+    def _apply_preset(self, name: str, preset: dict) -> None:
+        """Apply a preset's settings to all option selects."""
+        container = preset.get("container", "")
+        codec = preset.get("codec", "")
+        bitrate = preset.get("bitrate")
+        channels = preset.get("channels", 2)
+
+        # Store pending state; _finish_preset_apply runs after _on_format_changed
+        # has processed (Textual Select.Changed messages are async, so the format
+        # change event fires AFTER _apply_preset returns and would overwrite the
+        # codec we set here without the deferred approach).
+        self._pending_preset = (container, codec, bitrate, channels, name)
+        self._syncing_preset = True
+
+        if container:
+            self.query_one("#format-select", Select).value = container
+
+        if bitrate:
+            self.query_one("#bitrate-select", Select).value = bitrate
+
+        self.query_one("#channels-select", Select).value = channels
+
+        # Defer codec assignment + final updates to after the queued
+        # Select.Changed for the format has been processed.
+        self.call_after_refresh(self._finish_preset_apply)
+
+    def _finish_preset_apply(self) -> None:
+        """Complete preset application after format-change event has processed."""
+        if not self._pending_preset:
+            return
+        container, codec, bitrate, channels, name = self._pending_preset
+        self._pending_preset = None
+
+        if codec:
+            self.query_one("#codec-select", Select).value = codec
+
+        self._syncing_preset = False
+
+        self.query_one("#bitrate-row").display = self._should_show_bitrate()
+        self._refresh_settings_summary()
+
+        if container:
+            current_output = self.query_one("#output-path", Input).value.strip()
+            if current_output:
+                self.query_one("#output-path", Input).value = str(
+                    Path(current_output).with_suffix(container)
+                )
+            elif self._current_input_path:
+                self.query_one("#output-path", Input).value = str(
+                    Path(self._current_input_path).with_suffix(container)
+                )
+
+        self.log_message(f"Preset loaded: [bold]{name}[/]")
+
+    def _on_save_preset_result(self, name: str | None) -> None:
+        if not name:
+            return
+        container = self.query_one("#format-select", Select).value
+        codec = self.query_one("#codec-select", Select).value
+        bitrate_visible = self.query_one("#bitrate-row").display
+        bitrate = self.query_one("#bitrate-select", Select).value if bitrate_visible else None
+        channels = self.query_one("#channels-select", Select).value
+        save_preset(str(name), str(container), str(codec), bitrate, int(channels))
+        self._repopulate_preset_select(select_name=name)
+        self.log_message(f"Preset saved: [bold]{name}[/]")
+
+    def _on_delete_preset_result(self, name: str | None) -> None:
+        if not name:
+            return
+        delete_preset(name)
+        self._repopulate_preset_select()
+        self.log_message(f"Preset deleted: [bold]{name}[/]")
+
+    def _refresh_settings_summary(self) -> None:
+        """Update the settings summary line above the log."""
+        container = self.query_one("#format-select", Select).value
+        codec = self.query_one("#codec-select", Select).value
+        channels = self.query_one("#channels-select", Select).value
+
+        fmt_name = str(container).lstrip(".").upper()
+        channels_name = "Mono" if channels == 1 else "Stereo"
+        lossless = container in LOSSLESS_CONTAINERS or str(codec) == "copy"
+
+        if str(codec) in CODEC_CONSTRAINTS:
+            codec_display = f"{codec}  ⚠ 8000 Hz (fixed)"
+        else:
+            codec_display = str(codec)
+
+        if lossless:
+            text = f"Output:  {fmt_name}  ·  {codec_display}  ·  {channels_name}"
+        else:
+            bitrate = self.query_one("#bitrate-select", Select).value
+            text = f"Output:  {fmt_name}  ·  {codec_display}  ·  {bitrate}  ·  {channels_name}"
+
+        self.query_one("#settings-summary", Static).update(text)
 
     def _should_show_bitrate(self) -> bool:
         container = self.query_one("#format-select", Select).value
@@ -298,19 +612,6 @@ class AFCApp(App):
         self.query_one("#trim-end", Input).value = fmt_time(event.value)
         self._syncing_scrubber = False
 
-    def _parse_trim_input(self, value: str) -> float | None:
-        """Parse a trim input value (M:SS.s or bare seconds) into seconds."""
-        value = value.strip()
-        if not value:
-            return None
-        try:
-            if ":" in value:
-                parts = value.split(":", 1)
-                return int(parts[0]) * 60 + float(parts[1])
-            return float(value)
-        except ValueError:
-            return None
-
     # ------------------------------------------------------------------
     # Input handlers
     # ------------------------------------------------------------------
@@ -321,7 +622,7 @@ class AFCApp(App):
             if os.path.isfile(path) and is_audio_file(path):
                 self.set_input_file(path)
             elif os.path.isfile(path):
-                self.log_message(f"[red]Unsupported format:[/] {Path(path).suffix or '(none)'}")
+                self.log_message(f"[yellow]Unsupported format:[/] {Path(path).suffix or '(none)'}")
             else:
                 self.log_message(f"[red]File not found:[/] {path}")
 
@@ -332,7 +633,7 @@ class AFCApp(App):
         if event.input.id in ("trim-start", "trim-end") and not self._syncing_scrubber:
             scrubber = self.query_one("#scrubber", AudioScrubber)
             if scrubber.duration > 0:
-                t = self._parse_trim_input(event.value)
+                t = parse_trim_time(event.value)
                 if t is not None:
                     self._syncing_scrubber = True
                     if event.input.id == "trim-start":
@@ -388,13 +689,13 @@ class AFCApp(App):
 
         input_path = self.query_one("#input-path", Input).value.strip().strip("'\"")
         if not input_path:
-            self.log_message("[red]No input file specified.[/]")
+            self.log_message("[yellow]No input file specified.[/]")
             return
         if not os.path.isfile(input_path):
             self.log_message(f"[red]File not found:[/] {input_path}")
             return
         if not is_audio_file(input_path):
-            self.log_message(f"[red]Unsupported format:[/] {Path(input_path).suffix}")
+            self.log_message(f"[yellow]Unsupported format:[/] {Path(input_path).suffix}")
             return
 
         output_path = self.query_one("#output-path", Input).value.strip()
@@ -438,8 +739,8 @@ class AFCApp(App):
         self._cancelled = False
 
         btn = self.query_one("#convert-btn", Button)
-        self.call_from_thread(btn.__setattr__, "disabled", True)
-        self.call_from_thread(btn.__setattr__, "label", "Converting...")
+        self.call_from_thread(setattr, btn, "disabled", True)
+        self.call_from_thread(setattr, btn, "label", "Converting...")
 
         progress_bar = self.query_one("#progress-bar", ProgressBar)
         self.call_from_thread(progress_bar.update, progress=0)
@@ -471,6 +772,7 @@ class AFCApp(App):
                 end_time=end_time,
                 progress_callback=on_progress,
                 cancel_check=check_cancel,
+                audio_info=self._audio_info,
             )
 
             if self._cancelled:
@@ -484,16 +786,17 @@ class AFCApp(App):
                     f"[green]Done![/] Saved to [bold]{output_path}[/] ({size_mb:.1f} MB)",
                 )
                 on_progress(100)
+                self._converted_path = output_path
                 play_btn = self.query_one("#play-converted-btn", Button)
-                self.call_from_thread(play_btn.__setattr__, "disabled", False)
+                self.call_from_thread(setattr, play_btn, "disabled", False)
 
         except Exception as e:
             self.call_from_thread(self.log_message, f"[red]Error:[/] {e}")
         finally:
             self._converting = False
             self._cancelled = False
-            self.call_from_thread(btn.__setattr__, "disabled", False)
-            self.call_from_thread(btn.__setattr__, "label", "Convert")
+            self.call_from_thread(setattr, btn, "disabled", False)
+            self.call_from_thread(setattr, btn, "label", "Convert")
 
     # ------------------------------------------------------------------
     # Playback workers
@@ -508,19 +811,21 @@ class AFCApp(App):
 
         btn = self.query_one("#play-original-btn", Button)
         stop_btn = self.query_one("#stop-btn", Button)
-        self.call_from_thread(btn.__setattr__, "disabled", True)
-        self.call_from_thread(stop_btn.__setattr__, "disabled", False)
+        self.call_from_thread(setattr, btn, "disabled", True)
+        self.call_from_thread(setattr, stop_btn, "disabled", False)
 
         self._playback_process = play_audio(self._current_input_path)
         self._playback_process.wait()
 
-        self.call_from_thread(btn.__setattr__, "disabled", False)
-        self.call_from_thread(stop_btn.__setattr__, "disabled", True)
+        self.call_from_thread(setattr, btn, "disabled", False)
+        self.call_from_thread(setattr, stop_btn, "disabled", True)
 
     @work(thread=True)
     def _do_play_converted(self) -> None:
-        output_path = self.query_one("#output-path", Input).value.strip()
-        if not output_path or not os.path.isfile(output_path):
+        # Capture path before entering thread to avoid reading widget state
+        # from a background thread.
+        converted_path = self._converted_path
+        if not converted_path or not os.path.isfile(converted_path):
             self.call_from_thread(self.log_message, "[red]Converted file not found.[/]")
             return
         stop_audio(self._playback_process)
@@ -528,21 +833,21 @@ class AFCApp(App):
 
         btn = self.query_one("#play-converted-btn", Button)
         stop_btn = self.query_one("#stop-btn", Button)
-        self.call_from_thread(btn.__setattr__, "disabled", True)
-        self.call_from_thread(stop_btn.__setattr__, "disabled", False)
+        self.call_from_thread(setattr, btn, "disabled", True)
+        self.call_from_thread(setattr, stop_btn, "disabled", False)
 
-        self._playback_process = play_audio(output_path)
+        self._playback_process = play_audio(converted_path)
         self._playback_process.wait()
 
-        self.call_from_thread(btn.__setattr__, "disabled", False)
-        self.call_from_thread(stop_btn.__setattr__, "disabled", True)
+        self.call_from_thread(setattr, btn, "disabled", False)
+        self.call_from_thread(setattr, stop_btn, "disabled", True)
 
     @work(thread=True)
     def _do_stop_playback(self) -> None:
         stop_audio(self._playback_process)
         self._playback_process = None
         stop_btn = self.query_one("#stop-btn", Button)
-        self.call_from_thread(stop_btn.__setattr__, "disabled", True)
+        self.call_from_thread(setattr, stop_btn, "disabled", True)
 
     def on_unmount(self) -> None:
         stop_audio(self._playback_process)
