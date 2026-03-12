@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QColor, QFont, QKeySequence, QShortcut, QTextCharFormat
+from PySide6.QtGui import QColor, QFont, QIcon, QKeySequence, QShortcut, QTextCharFormat
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -40,7 +40,6 @@ from afctui.converter import (
 from afctui.gui_scrubber import AudioScrubberWidget
 from afctui.player import play_audio, stop_audio
 from afctui.presets import (
-    BUILT_IN_PRESETS,
     all_presets,
     delete_preset,
     load_user_presets,
@@ -138,6 +137,7 @@ class AFCGuiApp(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("AFCGUI — Audio File Converter")
+        self._apply_icon()
         self.setMinimumSize(720, 640)
 
         self._current_input_path: str | None = None
@@ -164,6 +164,19 @@ class AFCGuiApp(QMainWindow):
         self._refresh_settings_summary()
         self._log("Ready. Drop an audio file or click Browse to select one.")
         self._log("Supported input formats: " + ", ".join(sorted(SUPPORTED_INPUT_FORMATS)))
+
+    # ------------------------------------------------------------------
+    # Window icon
+    # ------------------------------------------------------------------
+
+    def _apply_icon(self) -> None:
+        """Set the window/taskbar icon from the bundled ICO asset."""
+        import sys
+        # PyInstaller extracts to sys._MEIPASS; in dev, resolve from source tree
+        base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+        ico = base / "assets" / "afctui.ico"
+        if ico.exists():
+            self.setWindowIcon(QIcon(str(ico)))
 
     # ------------------------------------------------------------------
     # UI construction

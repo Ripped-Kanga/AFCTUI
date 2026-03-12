@@ -342,7 +342,7 @@ class AFCApp(App):
             self.set_input_file(path)
         else:
             suffix = Path(path).suffix or "(none)"
-            self.log_message(f"[red]Unsupported format:[/] {suffix}")
+            self.log_message(f"[yellow]Unsupported format:[/] {suffix}")
 
     # ------------------------------------------------------------------
     # File selection
@@ -622,7 +622,7 @@ class AFCApp(App):
             if os.path.isfile(path) and is_audio_file(path):
                 self.set_input_file(path)
             elif os.path.isfile(path):
-                self.log_message(f"[red]Unsupported format:[/] {Path(path).suffix or '(none)'}")
+                self.log_message(f"[yellow]Unsupported format:[/] {Path(path).suffix or '(none)'}")
             else:
                 self.log_message(f"[red]File not found:[/] {path}")
 
@@ -689,13 +689,13 @@ class AFCApp(App):
 
         input_path = self.query_one("#input-path", Input).value.strip().strip("'\"")
         if not input_path:
-            self.log_message("[red]No input file specified.[/]")
+            self.log_message("[yellow]No input file specified.[/]")
             return
         if not os.path.isfile(input_path):
             self.log_message(f"[red]File not found:[/] {input_path}")
             return
         if not is_audio_file(input_path):
-            self.log_message(f"[red]Unsupported format:[/] {Path(input_path).suffix}")
+            self.log_message(f"[yellow]Unsupported format:[/] {Path(input_path).suffix}")
             return
 
         output_path = self.query_one("#output-path", Input).value.strip()

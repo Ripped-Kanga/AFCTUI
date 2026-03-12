@@ -28,14 +28,15 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 import os
-block_cipher = None
 _ico = os.path.join(SPECPATH, 'src', 'afctui', 'assets', 'afctui.ico')
 
 a = Analysis(
     ['src/afctui/gui_main.py'],
     pathex=['src'],
     binaries=[],
-    datas=[],
+    datas=[
+        (os.path.join('src', 'afctui', 'assets', 'afctui.ico'), 'assets'),
+    ],
     hiddenimports=[
         'afctui.utils',
         'afctui.converter',
@@ -52,13 +53,10 @@ a = Analysis(
         'textual',
         'rich',
     ],
-    win_no_prefer_redirects=False,
-    win_private_assemblies=False,
-    cipher=block_cipher,
     noarchive=False,
 )
 
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+pyz = PYZ(a.pure, a.zipped_data)
 
 exe = EXE(
     pyz,
