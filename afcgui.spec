@@ -27,7 +27,9 @@
 #   ],
 # ──────────────────────────────────────────────────────────────────────────────
 
+import os
 block_cipher = None
+_ico = os.path.join(SPECPATH, 'src', 'afctui', 'assets', 'afctui.ico')
 
 a = Analysis(
     ['src/afctui/gui_main.py'],
@@ -69,7 +71,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,      # No console window — pure GUI app
@@ -77,5 +79,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='src/afctui/assets/afctui.ico',
+    icon=_ico,
 )
