@@ -22,3 +22,4 @@ afcgui  = "afctui.gui_main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/afctui"]
+artifacts = ["src/afctui/assets/*"]
