@@ -12,7 +12,7 @@
   #define AppVersion "0.1.0"
 #endif
 
-#define AppName      "AFCTUI"
+#define AppName      "AFCGUI"
 #define AppPublisher "Ripped-Kanga"
 #define AppURL       "https://github.com/Ripped-Kanga/AFCTUI"
 #define AppExeName   "afcgui.exe"
