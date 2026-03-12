@@ -3,24 +3,17 @@
 from __future__ import annotations
 
 import json
-import os
-import platform
 import re
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable
+
+from afctui.utils import POPEN_FLAGS
 
 _TIME_PATTERN = re.compile(r"out_time_us=(\d+)")
 _DURATION_PATTERN = re.compile(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
-
-# Suppress console windows on Windows for background processes
-_POPEN_FLAGS: dict = (
-    {"creationflags": subprocess.CREATE_NO_WINDOW}
-    if platform.system() == "Windows"
-    else {}
-)
 
 SUPPORTED_INPUT_FORMATS: frozenset[str] = frozenset({
     ".mp3", ".flac", ".wav", ".aac", ".ogg", ".opus",
@@ -30,7 +23,7 @@ SUPPORTED_INPUT_FORMATS: frozenset[str] = frozenset({
 OUTPUT_FORMATS: dict[str, list[str]] = {
     ".mp3":  ["libmp3lame"],
     ".flac": ["flac"],
-    ".wav":  ["pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_alaw"],
+    ".wav":  ["pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_alaw", "pcm_mulaw"],
     ".aac":  ["aac", "libfdk_aac"],
     ".m4a":  ["aac", "libfdk_aac"],
     ".ogg":  ["libvorbis", "libopus"],
@@ -43,22 +36,35 @@ LOSSLESS_CONTAINERS: frozenset[str] = frozenset({".flac", ".wav"})
 BITRATE_OPTIONS: list[str] = ["64k", "96k", "128k", "192k", "256k", "320k"]
 DEFAULT_BITRATE = "192k"
 
+# Extra ffmpeg args applied automatically for specific codecs.
+# Add an entry here when a codec requires fixed encoding parameters
+# rather than scattering codec-specific logic through convert_audio.
+CODEC_CONSTRAINTS: dict[str, list[str]] = {
+    # G.711 A-law / μ-law: telephony codecs, fixed 8 kHz sample rate
+    "pcm_alaw": ["-ar", "8000"],
+    "pcm_mulaw": ["-ar", "8000"],
+}
+
 
 @dataclass
 class AudioInfo:
     duration: float
     codec: str
-    bitrate: Optional[int]  # bps, may be None
+    bitrate: int | None  # bps, may be None
     channels: int
     sample_rate: int
 
 
 @dataclass
 class ConversionOptions:
-    container: str    # e.g. ".mp3"
-    codec: str        # e.g. "libmp3lame"
-    bitrate: Optional[str]  # e.g. "192k", None for lossless
-    channels: int     # 1 = mono, 2 = stereo
+    container: str          # e.g. ".mp3"
+    codec: str              # e.g. "libmp3lame"
+    bitrate: str | None     # e.g. "192k", None for lossless
+    channels: int           # 1 = mono, 2 = stereo
+    # Caller-supplied extra ffmpeg args appended before the output path.
+    # Useful for one-off flags (filters, metadata, etc.) without changing
+    # the ConversionOptions signature for every new feature.
+    extra_ffmpeg_args: list[str] = field(default_factory=list)
 
 
 def check_ffmpeg() -> None:
@@ -99,7 +105,7 @@ def _probe_with_ffprobe(ffprobe: str, path: Path) -> AudioInfo:
             str(path),
         ],
         capture_output=True, text=True, timeout=15,
-        **_POPEN_FLAGS,
+        **POPEN_FLAGS,
     )
     try:
         data = json.loads(result.stdout)
@@ -152,7 +158,7 @@ def _probe_with_ffmpeg(path: Path) -> AudioInfo:
     result = subprocess.run(
         ["ffmpeg", "-i", str(path)],
         capture_output=True, text=True, timeout=15,
-        **_POPEN_FLAGS,
+        **POPEN_FLAGS,
     )
     stderr = result.stderr
 
@@ -200,24 +206,30 @@ def convert_audio(
     output_path: str | Path,
     options: ConversionOptions,
     start_time: float = 0.0,
-    end_time: Optional[float] = None,
-    progress_callback: Optional[Callable[[float], None]] = None,
-    cancel_check: Optional[Callable[[], bool]] = None,
+    end_time: float | None = None,
+    progress_callback: Callable[[float], None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
+    audio_info: AudioInfo | None = None,
 ) -> None:
     """Convert an audio file using ffmpeg with the given options.
 
-    start_time and end_time are in seconds. When both are at the full
+    start_time and end_time are in seconds.  When both are at the full
     file bounds (start=0, end=duration) no trim flags are added.
+
+    Pass *audio_info* (from a prior ``get_audio_info`` call) to skip the
+    internal re-probe used for progress reporting.
     """
     input_path = Path(input_path)
     output_path = Path(output_path)
 
-    # Probe duration for progress reporting and trim validation
-    try:
-        info = get_audio_info(input_path)
-        duration = info.duration
-    except Exception:
-        duration = 0.0
+    # Use caller-supplied info if available, otherwise probe now
+    if audio_info is not None:
+        duration = audio_info.duration
+    else:
+        try:
+            duration = get_audio_info(input_path).duration
+        except Exception:
+            duration = 0.0
 
     # Clamp trim bounds to the actual file duration
     trim_start = max(0.0, start_time)
@@ -231,9 +243,8 @@ def convert_audio(
     if options.bitrate and options.container not in LOSSLESS_CONTAINERS and options.codec != "copy":
         cmd.extend(["-b:a", options.bitrate])
 
-    # pcm_alaw is G.711 A-law: fixed 8000 Hz, 8-bit — enforce sample rate
-    if options.codec == "pcm_alaw":
-        cmd.extend(["-ar", "8000"])
+    # Apply any codec-specific fixed parameters (e.g. pcm_alaw → 8 kHz)
+    cmd.extend(CODEC_CONSTRAINTS.get(options.codec, []))
 
     cmd.extend(["-ac", str(options.channels)])
 
@@ -242,6 +253,10 @@ def convert_audio(
         cmd.extend(["-ss", f"{trim_start:.3f}"])
     if end_time is not None and trim_end < duration:
         cmd.extend(["-to", f"{trim_end:.3f}"])
+
+    # Caller-supplied extra flags (filters, metadata, etc.)
+    if options.extra_ffmpeg_args:
+        cmd.extend(options.extra_ffmpeg_args)
 
     cmd.append(str(output_path))
 
@@ -256,8 +271,8 @@ def is_audio_file(path: str | Path) -> bool:
 def _run_ffmpeg(
     cmd: list[str],
     duration: float,
-    progress_callback: Optional[Callable[[float], None]],
-    cancel_check: Optional[Callable[[], bool]],
+    progress_callback: Callable[[float], None] | None,
+    cancel_check: Callable[[], bool] | None,
 ) -> None:
     """Run an ffmpeg command and parse progress from stdout."""
     process = subprocess.Popen(
@@ -265,7 +280,7 @@ def _run_ffmpeg(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        **_POPEN_FLAGS,
+        **POPEN_FLAGS,
     )
 
     try:
@@ -278,8 +293,7 @@ def _run_ffmpeg(
             match = _TIME_PATTERN.search(line)
             if match and duration > 0 and progress_callback:
                 current_us = int(match.group(1))
-                current_s = current_us / 1_000_000
-                pct = min((current_s / duration) * 100, 100)
+                pct = min((current_us / 1_000_000) / duration * 100, 100)
                 progress_callback(pct)
 
         process.wait()

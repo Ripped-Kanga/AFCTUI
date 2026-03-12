@@ -35,10 +35,12 @@ a = Analysis(
     binaries=[],
     datas=[],
     hiddenimports=[
+        'afctui.utils',
         'afctui.converter',
         'afctui.player',
         'afctui.gui_scrubber',
         'afctui.gui_app',
+        'afctui.presets',
     ],
     hookspath=[],
     hooksconfig={},

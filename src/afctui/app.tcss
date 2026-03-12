@@ -60,6 +60,7 @@ Screen {
     margin-right: 1;
 }
 
+#preset-row,
 #format-row,
 #codec-row,
 #bitrate-row,
@@ -109,9 +110,19 @@ Screen {
     color: $text;
 }
 
+#settings-summary {
+    height: 1;
+    padding: 0 1;
+    color: $text-muted;
+    border-top: solid $panel;
+    border-left: solid $panel;
+    border-right: solid $panel;
+}
+
 #log {
     height: auto;
     max-height: 8;
     min-height: 4;
     border: solid $panel;
+    border-top: none;
 }

@@ -11,9 +11,11 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QSizePolicy,
@@ -24,6 +26,7 @@ from PySide6.QtWidgets import (
 
 from afctui.converter import (
     BITRATE_OPTIONS,
+    CODEC_CONSTRAINTS,
     DEFAULT_BITRATE,
     LOSSLESS_CONTAINERS,
     OUTPUT_FORMATS,
@@ -34,8 +37,16 @@ from afctui.converter import (
     get_audio_info,
     is_audio_file,
 )
-from afctui.gui_scrubber import AudioScrubberWidget, fmt_time
+from afctui.gui_scrubber import AudioScrubberWidget
 from afctui.player import play_audio, stop_audio
+from afctui.presets import (
+    BUILT_IN_PRESETS,
+    all_presets,
+    delete_preset,
+    load_user_presets,
+    save_preset,
+)
+from afctui.utils import fmt_time, parse_trim_time
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +80,7 @@ class _ConversionWorker(QThread):
         options: ConversionOptions,
         start_time: float,
         end_time: float | None,
+        audio_info: AudioInfo | None = None,
     ) -> None:
         super().__init__()
         self._input = input_path
@@ -76,6 +88,7 @@ class _ConversionWorker(QThread):
         self._options = options
         self._start = start_time
         self._end = end_time
+        self._audio_info = audio_info
         self._cancelled = False
 
     def cancel(self) -> None:
@@ -91,6 +104,7 @@ class _ConversionWorker(QThread):
                 self._end,
                 progress_callback=lambda pct: self.progress.emit(min(int(pct), 100)),
                 cancel_check=lambda: self._cancelled,
+                audio_info=self._audio_info,
             )
             self.finished.emit(not self._cancelled)
         except Exception as exc:
@@ -137,6 +151,7 @@ class AFCGuiApp(QMainWindow):
         self._playback_worker: _PlaybackWorker | None = None
         self._prev_codec: str = ""
         self._syncing_codec: bool = False
+        self._syncing_preset: bool = False
 
         self._build_ui()
         self._connect_signals()
@@ -145,6 +160,8 @@ class AFCGuiApp(QMainWindow):
         # Escape cancels an in-progress conversion
         QShortcut(QKeySequence("Escape"), self).activated.connect(self._on_cancel)
 
+        self._repopulate_preset_combo()
+        self._refresh_settings_summary()
         self._log("Ready. Drop an audio file or click Browse to select one.")
         self._log("Supported input formats: " + ", ".join(sorted(SUPPORTED_INPUT_FORMATS)))
 
@@ -194,7 +211,12 @@ class AFCGuiApp(QMainWindow):
         # ── Format / Codec / Bitrate / Channels row ───────────────────
         opts_row = QHBoxLayout()
 
-        opts_row.addWidget(QLabel("Format:"))
+        opts_row.addWidget(QLabel("Preset:"))
+        self._preset_combo = QComboBox()
+        self._preset_combo.setMinimumWidth(160)
+        opts_row.addWidget(self._preset_combo)
+
+        opts_row.addWidget(QLabel("  Format:"))
         self._format_combo = QComboBox()
         for ext in OUTPUT_FORMATS:
             self._format_combo.addItem(ext.lstrip(".").upper(), ext)
@@ -268,15 +290,36 @@ class AFCGuiApp(QMainWindow):
         self._progress.setTextVisible(True)
         root.addWidget(self._progress)
 
-        # ── Log ───────────────────────────────────────────────────────
-        self._log_edit = QTextEdit()
-        self._log_edit.setReadOnly(True)
         mono = QFont()
         mono.setFamily("Consolas")
         mono.setStyleHint(QFont.StyleHint.Monospace)
         mono.setPointSize(9)
+
+        # ── Settings summary ──────────────────────────────────────────
+        self._settings_label = QLabel()
+        self._settings_label.setFont(mono)
+        self._settings_label.setStyleSheet(
+            "padding: 4px 6px;"
+            "color: #aaaaaa;"
+            "border-top: 1px solid #444;"
+            "border-left: 1px solid #444;"
+            "border-right: 1px solid #444;"
+            "border-top-left-radius: 3px;"
+            "border-top-right-radius: 3px;"
+            "background: transparent;"
+        )
+        root.addWidget(self._settings_label)
+
+        # ── Log ───────────────────────────────────────────────────────
+        self._log_edit = QTextEdit()
+        self._log_edit.setReadOnly(True)
         self._log_edit.setFont(mono)
         self._log_edit.setMinimumHeight(100)
+        self._log_edit.setStyleSheet(
+            "border-top: none;"
+            "border-top-left-radius: 0;"
+            "border-top-right-radius: 0;"
+        )
         root.addWidget(self._log_edit, 1)
 
     def _repopulate_codec_combo(self, container_ext: str) -> None:
@@ -297,8 +340,11 @@ class AFCGuiApp(QMainWindow):
         self._play_conv_btn.clicked.connect(self._on_play_converted)
         self._stop_btn.clicked.connect(self._on_stop_playback)
 
+        self._preset_combo.currentIndexChanged.connect(self._on_preset_changed)
         self._format_combo.currentIndexChanged.connect(self._on_format_changed)
         self._codec_combo.currentIndexChanged.connect(self._on_codec_changed)
+        self._bitrate_combo.currentIndexChanged.connect(self._refresh_settings_summary)
+        self._channels_combo.currentIndexChanged.connect(self._refresh_settings_summary)
 
         self._input_edit.textChanged.connect(self._on_input_text_changed)
         self._input_edit.returnPressed.connect(self._on_input_submitted)
@@ -396,6 +442,7 @@ class AFCGuiApp(QMainWindow):
         worker = _ProbeWorker(path)
         worker.result.connect(lambda info: self._on_probe_done(path, info))
         worker.error.connect(lambda e: self._log_error(f"Probe failed: {e}"))
+        worker.finished.connect(worker.deleteLater)
         self._probe_worker = worker
         worker.start()
 
@@ -418,6 +465,120 @@ class AFCGuiApp(QMainWindow):
         )
 
     # ------------------------------------------------------------------
+    # Presets
+    # ------------------------------------------------------------------
+
+    _SAVE_SENTINEL = "__SAVE__"
+    _DELETE_SENTINEL = "__DELETE__"
+
+    def _repopulate_preset_combo(self, select_name: str | None = None) -> None:
+        """Rebuild the preset combo. Optionally re-select *select_name* after."""
+        self._syncing_preset = True
+        self._preset_combo.clear()
+        self._preset_combo.addItem("(Select preset…)", None)
+
+        presets = all_presets()
+        user = load_user_presets()
+
+        for name, _ in presets.items():
+            label = name if name in user else f"{name}  ★"
+            self._preset_combo.addItem(label, name)
+
+        self._preset_combo.insertSeparator(self._preset_combo.count())
+        self._preset_combo.addItem("Save as Preset…", self._SAVE_SENTINEL)
+        self._preset_combo.addItem("Delete Preset…", self._DELETE_SENTINEL)
+
+        if select_name is not None:
+            idx = self._preset_combo.findData(select_name)
+            if idx >= 0:
+                self._preset_combo.setCurrentIndex(idx)
+
+        self._syncing_preset = False
+
+    def _on_preset_changed(self, index: int) -> None:
+        if self._syncing_preset:
+            return
+        data = self._preset_combo.itemData(index)
+        if data is None:
+            return
+        if data == self._SAVE_SENTINEL:
+            self._syncing_preset = True
+            self._preset_combo.setCurrentIndex(0)
+            self._syncing_preset = False
+            self._do_save_preset()
+        elif data == self._DELETE_SENTINEL:
+            self._syncing_preset = True
+            self._preset_combo.setCurrentIndex(0)
+            self._syncing_preset = False
+            self._do_delete_preset()
+        else:
+            presets = all_presets()
+            if data in presets:
+                self._apply_preset(data, presets[data])
+
+    def _apply_preset(self, name: str, preset: dict) -> None:
+        """Apply a preset's settings to all option combos."""
+        self._syncing_preset = True
+
+        container = preset.get("container", "")
+        codec = preset.get("codec", "")
+        bitrate = preset.get("bitrate")
+        channels = preset.get("channels", 2)
+
+        idx = self._format_combo.findData(container)
+        if idx >= 0:
+            self._format_combo.setCurrentIndex(idx)
+            self._repopulate_codec_combo(container)
+
+        idx = self._codec_combo.findData(codec)
+        if idx >= 0:
+            self._codec_combo.setCurrentIndex(idx)
+
+        if bitrate:
+            idx = self._bitrate_combo.findData(bitrate)
+            if idx >= 0:
+                self._bitrate_combo.setCurrentIndex(idx)
+
+        idx = self._channels_combo.findData(channels)
+        if idx >= 0:
+            self._channels_combo.setCurrentIndex(idx)
+
+        self._update_bitrate_visibility()
+        self._syncing_preset = False
+
+        self._update_output_path()
+        self._refresh_settings_summary()
+        self._log(f"Preset loaded: {name}")
+
+    def _do_save_preset(self) -> None:
+        name, ok = QInputDialog.getText(self, "Save Preset", "Preset name:")
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+        container = self._format_combo.currentData() or ""
+        codec = self._codec_combo.currentData() or ""
+        bitrate = self._bitrate_combo.currentData() if self._bitrate_combo.isVisible() else None
+        channels = self._channels_combo.currentData() or 2
+        save_preset(name, container, codec, bitrate, channels)
+        self._repopulate_preset_combo(select_name=name)
+        self._log(f"Preset saved: {name}")
+
+    def _do_delete_preset(self) -> None:
+        user = load_user_presets()
+        if not user:
+            QMessageBox.information(self, "Delete Preset", "You have no saved presets to delete.")
+            return
+        name, ok = QInputDialog.getItem(
+            self, "Delete Preset", "Select preset to delete:",
+            list(user.keys()), 0, False,
+        )
+        if not ok:
+            return
+        delete_preset(name)
+        self._repopulate_preset_combo()
+        self._log(f"Preset deleted: {name}")
+
+    # ------------------------------------------------------------------
     # Format / codec / bitrate options
     # ------------------------------------------------------------------
 
@@ -425,6 +586,7 @@ class AFCGuiApp(QMainWindow):
         container = self._format_combo.currentData()
         self._repopulate_codec_combo(container)
         self._update_bitrate_visibility()
+        self._refresh_settings_summary()
 
         current_out = self._output_edit.text().strip()
         if current_out:
@@ -439,13 +601,36 @@ class AFCGuiApp(QMainWindow):
         codec = self._codec_combo.currentData() or ""
         if codec == self._prev_codec:
             return
-        if codec == "pcm_alaw":
-            self._log_warn("pcm_alaw (G.711 A-law): output will be resampled to 8000 Hz, 8-bit.")
-        elif self._prev_codec == "pcm_alaw":
-            self._log(f"Codec changed to {codec} — 8000 Hz resampling no longer applies.")
-        elif codec:
-            self._log(f"Codec: {codec}")
+        if codec in CODEC_CONSTRAINTS:
+            self._log_warn(f"{codec}: output will be resampled to 8000 Hz, 8-bit.")
+        elif self._prev_codec in CODEC_CONSTRAINTS:
+            self._log("8000 Hz resampling constraint removed.")
         self._prev_codec = codec
+        self._refresh_settings_summary()
+
+    def _refresh_settings_summary(self) -> None:
+        """Update the settings summary label above the log."""
+        container = self._format_combo.currentData() or ""
+        codec = self._codec_combo.currentData() or ""
+        channels = self._channels_combo.currentData()
+
+        fmt_name = container.lstrip(".").upper() or "—"
+        channels_name = "Mono" if channels == 1 else "Stereo"
+
+        lossless = container in LOSSLESS_CONTAINERS or codec == "copy"
+
+        if codec in CODEC_CONSTRAINTS:
+            codec_display = f"{codec}  ⚠ 8000 Hz (fixed)"
+        else:
+            codec_display = codec or "—"
+
+        if lossless:
+            text = f"Output:  {fmt_name}  ·  {codec_display}  ·  {channels_name}"
+        else:
+            bitrate = self._bitrate_combo.currentData() or "—"
+            text = f"Output:  {fmt_name}  ·  {codec_display}  ·  {bitrate}  ·  {channels_name}"
+
+        self._settings_label.setText(text)
 
     def _update_bitrate_visibility(self) -> None:
         container = self._format_combo.currentData() or ""
@@ -475,7 +660,7 @@ class AFCGuiApp(QMainWindow):
     def _on_trim_start_changed(self, text: str) -> None:
         if self._syncing_scrubber or self._scrubber.duration <= 0:
             return
-        t = self._parse_trim_time(text)
+        t = parse_trim_time(text)
         if t is not None:
             self._syncing_scrubber = True
             self._scrubber.set_start_time(t)
@@ -484,24 +669,11 @@ class AFCGuiApp(QMainWindow):
     def _on_trim_end_changed(self, text: str) -> None:
         if self._syncing_scrubber or self._scrubber.duration <= 0:
             return
-        t = self._parse_trim_time(text)
+        t = parse_trim_time(text)
         if t is not None:
             self._syncing_scrubber = True
             self._scrubber.set_end_time(t)
             self._syncing_scrubber = False
-
-    @staticmethod
-    def _parse_trim_time(value: str) -> float | None:
-        value = value.strip()
-        if not value:
-            return None
-        try:
-            if ":" in value:
-                parts = value.split(":", 1)
-                return int(parts[0]) * 60 + float(parts[1])
-            return float(value)
-        except ValueError:
-            return None
 
     # ------------------------------------------------------------------
     # Conversion
@@ -564,10 +736,14 @@ class AFCGuiApp(QMainWindow):
         self._convert_btn.setText("Converting…")
         self._progress.setValue(0)
 
-        worker = _ConversionWorker(input_path, output_path, options, start_time, end_time)
+        worker = _ConversionWorker(
+            input_path, output_path, options, start_time, end_time,
+            audio_info=self._audio_info,
+        )
         worker.progress.connect(self._progress.setValue)
         worker.error.connect(self._on_conversion_error)
         worker.finished.connect(lambda ok: self._on_conversion_finished(ok, output_path))
+        worker.finished.connect(worker.deleteLater)
         self._conversion_worker = worker
         worker.start()
 
@@ -616,6 +792,7 @@ class AFCGuiApp(QMainWindow):
         self._stop_btn.setEnabled(True)
         worker = _PlaybackWorker(self._current_input_path)
         worker.stopped.connect(self._on_playback_stopped)
+        worker.finished.connect(worker.deleteLater)
         self._playback_worker = worker
         worker.start()
 
@@ -628,6 +805,7 @@ class AFCGuiApp(QMainWindow):
         self._stop_btn.setEnabled(True)
         worker = _PlaybackWorker(self._converted_path)
         worker.stopped.connect(self._on_playback_stopped)
+        worker.finished.connect(worker.deleteLater)
         self._playback_worker = worker
         worker.start()
 
@@ -662,20 +840,17 @@ class AFCGuiApp(QMainWindow):
     def _log(self, msg: str) -> None:
         self._log_edit.append(msg)
 
-    def _log_warn(self, msg: str) -> None:
+    def _log_coloured(self, msg: str, colour: str) -> None:
         fmt = QTextCharFormat()
-        fmt.setForeground(QColor("#E8A000"))
+        fmt.setForeground(QColor(colour))
         cursor = self._log_edit.textCursor()
         cursor.movePosition(cursor.MoveOperation.End)
         cursor.insertText(msg + "\n", fmt)
         self._log_edit.setTextCursor(cursor)
         self._log_edit.ensureCursorVisible()
 
+    def _log_warn(self, msg: str) -> None:
+        self._log_coloured(msg, "#E8A000")
+
     def _log_error(self, msg: str) -> None:
-        fmt = QTextCharFormat()
-        fmt.setForeground(QColor("#D94040"))
-        cursor = self._log_edit.textCursor()
-        cursor.movePosition(cursor.MoveOperation.End)
-        cursor.insertText(msg + "\n", fmt)
-        self._log_edit.setTextCursor(cursor)
-        self._log_edit.ensureCursorVisible()
+        self._log_coloured(msg, "#D94040")
