@@ -6,15 +6,35 @@ import sys
 
 
 def _fatal(title: str, message: str) -> None:
-    """Show an error dialog without requiring Qt (safe before QApplication exists)."""
-    import os
-    import platform
-    import tempfile
-    log_path = os.path.join(tempfile.gettempdir(), "afcgui_startup.log")
-    if platform.system() == "Windows":
-        import ctypes
-        full = f"{message}\n\nSee startup log for details:\n{log_path}"
-        ctypes.windll.user32.MessageBoxW(0, full, title, 0x10)  # MB_ICONERROR
+    """Show an error dialog without requiring Qt (safe before QApplication exists).
+
+    Uses only sys (built-in) and ctypes (C extension) so this works even when
+    PyInstaller's base_library.zip cannot be resolved — which can happen on
+    machines where %TEMP% is set to a Windows 8.3 short-name path (e.g. a
+    username containing a dot on an Entra ID joined machine).
+    """
+    # Write a log file first so the information is preserved even if the
+    # MessageBox call below also fails.  Wrapped defensively because os and
+    # tempfile live in base_library.zip and may not be importable in the same
+    # failure scenario described above.
+    log_path: str | None = None
+    try:
+        import os
+        import tempfile
+        log_path = os.path.join(tempfile.gettempdir(), "afcgui_startup.log")
+        with open(log_path, "w", encoding="utf-8") as fh:
+            fh.write(f"{title}\n\n{message}\n")
+    except Exception:  # noqa: BLE001
+        pass
+
+    # sys.platform is a built-in attribute — never needs base_library.zip.
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            detail = f"\n\nSee startup log:\n{log_path}" if log_path else ""
+            ctypes.windll.user32.MessageBoxW(0, message + detail, title, 0x10)
+        except Exception:  # noqa: BLE001
+            pass
     else:
         print(f"{title}: {message}", file=sys.stderr)
 
@@ -63,7 +83,6 @@ def _handle_missing_ffmpeg(error_msg: str) -> bool:
     On Windows, offers a one-click winget install option.
     Returns True if the user attempted an install (caller should re-check PATH).
     """
-    import platform
     import webbrowser
 
     from PySide6.QtWidgets import QMessageBox
@@ -79,7 +98,7 @@ def _handle_missing_ffmpeg(error_msg: str) -> bool:
     msg.setDetailedText(error_msg)
 
     winget_btn = None
-    if platform.system() == "Windows":
+    if sys.platform == "win32":
         winget_btn = msg.addButton("Install via winget", QMessageBox.ButtonRole.ActionRole)
 
     ffmpeg_btn = msg.addButton("Open ffmpeg.org", QMessageBox.ButtonRole.ActionRole)
