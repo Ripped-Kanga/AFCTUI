@@ -82,11 +82,9 @@ begin
     if not VCRedistInstalled then
     begin
       MsgBox(
-        'AFCGUI requires the Microsoft Visual C++ 2015-2022 Redistributable (x64).' + #13#10 +
-        #13#10 +
+        'AFCGUI requires the Microsoft Visual C++ 2015-2022 Redistributable (x64).' + #13#10 + #13#10 +
         'If the application fails to start with a DLL error, download and' + #13#10 +
-        'install the redistributable from Microsoft, then restart AFCGUI:' + #13#10 +
-        #13#10 +
+        'install it from Microsoft, then restart AFCGUI:' + #13#10 + #13#10 +
         'https://aka.ms/vs/17/release/vc_redist.x64.exe',
         mbInformation,
         MB_OK
