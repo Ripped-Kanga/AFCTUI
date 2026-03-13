@@ -58,3 +58,39 @@ Name: "{commondesktop}\{#AppName}";                  Filename: "{app}\{#AppExeNa
 Filename: "{app}\{#AppExeName}"; \
   Description: "{cm:LaunchProgram,{#AppName}}"; \
   Flags: nowait postinstall skipifsilent
+
+[Code]
+{ Check whether the Microsoft Visual C++ 2015-2022 x64 Redistributable is
+  installed.  Qt (PySide6) and the PyInstaller-bundled exe both require it.
+  All VS 2015-2022 releases share the same runtime and registry key. }
+function VCRedistInstalled: Boolean;
+var
+  Installed: Cardinal;
+begin
+  Result := RegQueryDWordValue(
+    HKEY_LOCAL_MACHINE,
+    'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\X64',
+    'Installed',
+    Installed
+  ) and (Installed = 1);
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+  begin
+    if not VCRedistInstalled then
+    begin
+      MsgBox(
+        'AFCGUI requires the Microsoft Visual C++ 2015-2022 Redistributable (x64).' + #13#10 +
+        #13#10 +
+        'If the application fails to start with a DLL error, download and' + #13#10 +
+        'install the redistributable from Microsoft, then restart AFCGUI:' + #13#10 +
+        #13#10 +
+        'https://aka.ms/vs/17/release/vc_redist.x64.exe',
+        mbInformation,
+        MB_OK
+      );
+    end;
+  end;
+end;
