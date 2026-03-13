@@ -27,18 +27,23 @@
 #   ],
 # ──────────────────────────────────────────────────────────────────────────────
 
-block_cipher = None
+import os
+_ico = os.path.join(SPECPATH, 'src', 'afctui', 'assets', 'afctui.ico')
 
 a = Analysis(
     ['src/afctui/gui_main.py'],
     pathex=['src'],
     binaries=[],
-    datas=[],
+    datas=[
+        (os.path.join('src', 'afctui', 'assets', 'afctui.ico'), 'assets'),
+    ],
     hiddenimports=[
+        'afctui.utils',
         'afctui.converter',
         'afctui.player',
         'afctui.gui_scrubber',
         'afctui.gui_app',
+        'afctui.presets',
     ],
     hookspath=[],
     hooksconfig={},
@@ -48,13 +53,10 @@ a = Analysis(
         'textual',
         'rich',
     ],
-    win_no_prefer_redirects=False,
-    win_private_assemblies=False,
-    cipher=block_cipher,
     noarchive=False,
 )
 
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+pyz = PYZ(a.pure, a.zipped_data)
 
 exe = EXE(
     pyz,
@@ -67,7 +69,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,      # No console window — pure GUI app
@@ -75,5 +77,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,          # Set to an .ico path here to add a custom app icon
+    icon=_ico,
 )
